@@ -7,10 +7,12 @@ Stop juggling terminal windows. Manage Claude Code and OpenCode agents on an inf
 ## Installation
 
 ```bash
-# Run directly
-npx @fallom/openui
+# Install globally (then just run 'openui' anywhere)
+npm install -g @fallom/openui
+openui
 
-# Or with bun
+# Or run without installing
+npx @fallom/openui
 bunx @fallom/openui
 ```
 
