@@ -31,7 +31,12 @@ export function loadState(): PersistedState {
 export function saveState(sessions: Map<string, Session>) {
   ensureDirs();
   const savedState = loadState();
-  const state: PersistedState = { nodes: [] };
+
+  // Preserve categories from existing state
+  const state: PersistedState = {
+    nodes: [],
+    categories: savedState.categories || [],
+  };
 
   for (const [sessionId, session] of sessions) {
     // Preserve existing position if we have one
