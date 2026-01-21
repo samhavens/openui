@@ -1,14 +1,14 @@
-import { MessageSquare, WifiOff, FolderGit2, GitBranch } from "lucide-react";
+import { MessageSquare, WifiOff, GitBranch, Loader2 } from "lucide-react";
 import { AgentStatus, ClaudeMetrics } from "../../stores/useStore";
 
-const statusConfig: Record<AgentStatus, { label: string; color: string; animate?: boolean }> = {
-  starting: { label: "Starting", color: "#FBBF24", animate: true },
-  running: { label: "Running", color: "#22C55E", animate: true },
-  waiting_input: { label: "Needs Input", color: "#F97316", animate: false },
-  tool_calling: { label: "Tool Calling", color: "#8B5CF6", animate: true },
-  idle: { label: "Idle", color: "#6B7280", animate: false },
-  disconnected: { label: "Disconnected", color: "#EF4444", animate: false },
-  error: { label: "Error", color: "#EF4444", animate: false },
+const statusConfig: Record<AgentStatus, { label: string; color: string; bgColor: string; animate?: boolean; attention?: boolean }> = {
+  starting: { label: "Starting", color: "#FBBF24", bgColor: "#FBBF2420", animate: true },
+  running: { label: "Working", color: "#22C55E", bgColor: "#22C55E20", animate: true },
+  waiting_input: { label: "Needs Input", color: "#F97316", bgColor: "#F9731630", animate: false, attention: true },
+  tool_calling: { label: "Using Tools", color: "#8B5CF6", bgColor: "#8B5CF620", animate: true },
+  idle: { label: "Idle", color: "#6B7280", bgColor: "#6B728020", animate: false },
+  disconnected: { label: "Offline", color: "#EF4444", bgColor: "#EF444420", animate: false, attention: true },
+  error: { label: "Error", color: "#EF4444", bgColor: "#EF444420", animate: false, attention: true },
 };
 
 interface AgentNodeCardProps {
@@ -21,6 +21,8 @@ interface AgentNodeCardProps {
   metrics?: ClaudeMetrics;
   cwd?: string;
   gitBranch?: string;
+  ticketId?: string;
+  ticketTitle?: string;
 }
 
 export function AgentNodeCard({
@@ -33,99 +35,99 @@ export function AgentNodeCard({
   metrics,
   cwd,
   gitBranch,
+  ticketId,
+  ticketTitle,
 }: AgentNodeCardProps) {
   const statusInfo = statusConfig[status] || statusConfig.idle;
+  const needsAttention = statusInfo.attention;
 
   // Extract directory name from cwd
   const dirName = cwd ? cwd.split("/").pop() || cwd : null;
 
   return (
     <div
-      className={`relative w-[180px] rounded-lg transition-all duration-200 cursor-pointer ${
-        selected ? "ring-1 ring-white/20" : ""
+      className={`relative w-[220px] rounded-lg transition-all duration-200 cursor-pointer ${
+        selected ? "ring-2 ring-white/30" : ""
       }`}
       style={{
         backgroundColor: "#262626",
-        boxShadow: selected
-          ? "0 4px 16px rgba(0, 0, 0, 0.4)"
+        boxShadow: needsAttention
+          ? `0 0 0 2px ${statusInfo.color}, 0 4px 20px rgba(0, 0, 0, 0.5)`
+          : selected
+          ? "0 4px 20px rgba(0, 0, 0, 0.5)"
           : "0 2px 8px rgba(0, 0, 0, 0.3)",
       }}
     >
-      <div className="h-1 rounded-t-lg" style={{ backgroundColor: displayColor }} />
+      {/* Color bar at top */}
+      <div className="h-1.5 rounded-t-lg" style={{ backgroundColor: displayColor }} />
 
-      <div className="p-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
+      {/* Status banner - prominent when needs attention */}
+      <div
+        className="px-3 py-1.5 flex items-center justify-between"
+        style={{ backgroundColor: statusInfo.bgColor }}
+      >
+        <div className="flex items-center gap-2">
+          {statusInfo.animate ? (
+            <Loader2 className="w-3 h-3 animate-spin" style={{ color: statusInfo.color }} />
+          ) : (
             <div
-              className="w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0"
-              style={{ backgroundColor: `${displayColor}20` }}
-            >
-              <Icon className="w-4 h-4" style={{ color: displayColor }} />
-            </div>
-            <div className="min-w-0">
-              <h3 className="text-sm font-medium text-white truncate">{displayName}</h3>
-              <p className="text-[10px] text-zinc-500 truncate">{agentId}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-3 flex items-center gap-2">
-          <div className="relative flex items-center justify-center">
-            <div
-              className="w-2 h-2 rounded-full"
+              className="w-2.5 h-2.5 rounded-full"
               style={{ backgroundColor: statusInfo.color }}
             />
-            {statusInfo.animate && (
-              <div
-                className="absolute w-2 h-2 rounded-full animate-ping"
-                style={{ backgroundColor: statusInfo.color, opacity: 0.5 }}
-              />
-            )}
+          )}
+          <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
+            {statusInfo.label}
+          </span>
+        </div>
+        {status === "waiting_input" && (
+          <MessageSquare className="w-4 h-4 text-orange-500" />
+        )}
+        {status === "disconnected" && (
+          <WifiOff className="w-4 h-4 text-red-500" />
+        )}
+      </div>
+
+      <div className="p-3">
+        {/* Agent name and icon */}
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: `${displayColor}20` }}
+          >
+            <Icon className="w-5 h-5" style={{ color: displayColor }} />
           </div>
-          <span className="text-[10px] text-zinc-500">{statusInfo.label}</span>
-
-          {status === "waiting_input" && (
-            <div className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-500/10 border border-orange-500/20">
-              <MessageSquare className="w-2.5 h-2.5 text-orange-500" />
-              <span className="text-[9px] text-orange-500 font-medium">Input</span>
-            </div>
-          )}
-
-          {status === "disconnected" && (
-            <div className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-500/10 border border-red-500/20">
-              <WifiOff className="w-2.5 h-2.5 text-red-500" />
-              <span className="text-[9px] text-red-500 font-medium">Offline</span>
-            </div>
-          )}
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-white truncate leading-tight">{displayName}</h3>
+            <p className="text-[10px] text-zinc-500">{agentId}</p>
+          </div>
         </div>
 
-        {/* Directory & Branch */}
-        {(dirName || gitBranch) && (
-          <div className="mt-2 flex items-center gap-1.5 text-[9px] text-zinc-500">
-            <FolderGit2 className="w-3 h-3 flex-shrink-0" />
-            <span className="truncate">{dirName}</span>
-            {gitBranch && (
-              <>
-                <GitBranch className="w-3 h-3 flex-shrink-0 text-zinc-600" />
-                <span className="truncate text-purple-400">{gitBranch}</span>
-              </>
+        {/* Ticket info (placeholder for Linear integration) */}
+        {ticketId && (
+          <div className="mt-2.5 px-2 py-1.5 rounded-md bg-indigo-500/10 border border-indigo-500/20">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-mono font-semibold text-indigo-400">{ticketId}</span>
+            </div>
+            {ticketTitle && (
+              <p className="text-[10px] text-indigo-300/70 truncate mt-0.5">{ticketTitle}</p>
             )}
           </div>
         )}
 
-        {/* Metrics for Claude agents */}
-        {metrics && agentId === "claude" && (
-          <div className="mt-2 pt-2 border-t border-zinc-700/50 space-y-1.5">
-            {/* Model & Cost row */}
-            <div className="flex items-center justify-between text-[9px]">
-              <span className="text-cyan-400 font-medium truncate">{metrics.model}</span>
-              <span className="text-blue-400">${metrics.cost.toFixed(4)}</span>
-            </div>
+        {/* Branch */}
+        {gitBranch && (
+          <div className="mt-2 flex items-center gap-1.5">
+            <GitBranch className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
+            <span className="text-[11px] text-purple-400 font-mono truncate">{gitBranch}</span>
+          </div>
+        )}
 
-            {/* Context bar */}
-            <div className="flex items-center gap-1.5">
-              <span className="text-[8px] text-zinc-500 w-6">ctx</span>
-              <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+        {/* Metrics for Claude agents - compact */}
+        {metrics && agentId === "claude" && (
+          <div className="mt-2.5 pt-2 border-t border-zinc-700/50">
+            {/* Context bar - full width, more prominent */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
                 <div
                   className="h-full rounded-full transition-all"
                   style={{
@@ -134,20 +136,28 @@ export function AgentNodeCard({
                   }}
                 />
               </div>
-              <span className="text-[8px] text-zinc-400 w-6 text-right">{Math.round(metrics.contextPercent)}%</span>
+              <span className="text-[10px] text-zinc-400 w-8 text-right font-mono">{Math.round(metrics.contextPercent)}%</span>
             </div>
 
-            {/* Lines & Tokens row */}
-            <div className="flex items-center justify-between text-[8px]">
-              <span>
-                <span className="text-green-400">+{metrics.linesAdded}</span>
-                {" "}
-                <span className="text-red-400">-{metrics.linesRemoved}</span>
-              </span>
-              <span className="text-zinc-500">
-                {Math.round((metrics.inputTokens + metrics.outputTokens) / 1000)}k tok
-              </span>
+            {/* Model, Cost, Lines in one row */}
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-cyan-400 font-medium">{metrics.model}</span>
+              <div className="flex items-center gap-2">
+                <span>
+                  <span className="text-green-400">+{metrics.linesAdded}</span>
+                  <span className="text-zinc-600 mx-0.5">/</span>
+                  <span className="text-red-400">-{metrics.linesRemoved}</span>
+                </span>
+                <span className="text-blue-400 font-mono">${metrics.cost.toFixed(2)}</span>
+              </div>
             </div>
+          </div>
+        )}
+
+        {/* Directory - subtle at bottom */}
+        {dirName && !gitBranch && (
+          <div className="mt-2 text-[10px] text-zinc-600 truncate">
+            {dirName}
           </div>
         )}
       </div>
