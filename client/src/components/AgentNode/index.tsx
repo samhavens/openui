@@ -1,7 +1,7 @@
 import { NodeProps } from "@xyflow/react";
 import { motion } from "framer-motion";
 import { Sparkles, Code, Cpu, Zap, Rocket, Bot, Brain, Wand2 } from "lucide-react";
-import { useStore } from "../../stores/useStore";
+import { useStore, AgentStatus } from "../../stores/useStore";
 import { AgentNodeCard } from "./AgentNodeCard";
 import { AgentNodeContextMenu } from "./AgentNodeContextMenu";
 import { useAgentNodeState } from "./useAgentNodeState";
@@ -27,12 +27,16 @@ interface AgentNodeData {
 
 export const AgentNode = ({ id, data, selected }: NodeProps) => {
   const nodeData = data as unknown as AgentNodeData;
-  const sessions = useStore((state) => state.sessions);
-  const session = sessions.get(id);
+
+  // Subscribe directly to status and currentTool as primitive values - this guarantees re-render on change
+  const status: AgentStatus = useStore((state) => state.sessions.get(id)?.status) || "idle";
+  const currentTool = useStore((state) => state.sessions.get(id)?.currentTool);
+
+  // Get the full session for other data
+  const session = useStore((state) => state.sessions.get(id));
 
   const {
     contextMenu,
-    status,
     handleContextMenu,
     handleDelete,
     closeContextMenu,
@@ -57,8 +61,9 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           Icon={Icon}
           agentId={nodeData.agentId}
           status={status}
-          metrics={session?.metrics}
+          currentTool={currentTool}
           cwd={session?.cwd}
+          originalCwd={session?.originalCwd}
           gitBranch={session?.gitBranch}
           ticketId={session?.ticketId}
           ticketTitle={session?.ticketTitle}

@@ -1,14 +1,29 @@
-import { MessageSquare, WifiOff, GitBranch, Loader2, Folder } from "lucide-react";
-import { AgentStatus, ClaudeMetrics } from "../../stores/useStore";
+import { MessageSquare, WifiOff, GitBranch, Folder, Wrench } from "lucide-react";
+import { AgentStatus } from "../../stores/useStore";
 
-const statusConfig: Record<AgentStatus, { label: string; color: string; bgColor: string; animate?: boolean; attention?: boolean; glow?: boolean }> = {
-  starting: { label: "Starting", color: "#FBBF24", bgColor: "#FBBF2420", animate: true },
-  running: { label: "Working", color: "#22C55E", bgColor: "#22C55E20", animate: true, glow: true },
-  waiting_input: { label: "Waiting for input", color: "#FBBF24", bgColor: "#FBBF2420", animate: false, attention: true },
-  tool_calling: { label: "Using Tools", color: "#8B5CF6", bgColor: "#8B5CF620", animate: true, glow: true },
-  idle: { label: "Idle", color: "#6B7280", bgColor: "#6B728020", animate: false },
-  disconnected: { label: "Offline", color: "#EF4444", bgColor: "#EF444420", animate: false, attention: true },
-  error: { label: "Error", color: "#EF4444", bgColor: "#EF444420", animate: false, attention: true },
+// Status config with visual priority levels
+const statusConfig: Record<AgentStatus, { label: string; color: string; bgColor: string; isActive?: boolean; needsAttention?: boolean }> = {
+  running: { label: "Working", color: "#22C55E", bgColor: "#22C55E15", isActive: true },
+  tool_calling: { label: "Working", color: "#22C55E", bgColor: "#22C55E15", isActive: true },
+  waiting_input: { label: "Needs Input", color: "#F97316", bgColor: "#F9731620", needsAttention: true },
+  idle: { label: "Idle", color: "#FBBF24", bgColor: "#FBBF2415", needsAttention: true },
+  disconnected: { label: "Offline", color: "#6B7280", bgColor: "#6B728015" },
+  error: { label: "Error", color: "#EF4444", bgColor: "#EF444415", needsAttention: true },
+};
+
+// Tool name display mapping
+const toolDisplayNames: Record<string, string> = {
+  Read: "Reading",
+  Write: "Writing",
+  Edit: "Editing",
+  Bash: "Running",
+  Grep: "Searching",
+  Glob: "Finding",
+  Task: "Tasking",
+  WebFetch: "Fetching",
+  WebSearch: "Searching",
+  TodoWrite: "Planning",
+  AskUserQuestion: "Asking",
 };
 
 interface AgentNodeCardProps {
@@ -18,8 +33,9 @@ interface AgentNodeCardProps {
   Icon: any;
   agentId: string;
   status: AgentStatus;
-  metrics?: ClaudeMetrics;
+  currentTool?: string;
   cwd?: string;
+  originalCwd?: string; // Mother repo path when using worktrees
   gitBranch?: string;
   ticketId?: string;
   ticketTitle?: string;
@@ -32,70 +48,116 @@ export function AgentNodeCard({
   Icon,
   agentId,
   status,
-  metrics,
+  currentTool,
   cwd,
+  originalCwd,
   gitBranch,
   ticketId,
   ticketTitle,
 }: AgentNodeCardProps) {
+  // agentId is available for future use if needed
+  void agentId;
   const statusInfo = statusConfig[status] || statusConfig.idle;
-  const needsAttention = statusInfo.attention;
-  const isGlowing = statusInfo.glow;
+  const isActive = statusInfo.isActive;
+  const isToolCalling = status === "tool_calling";
+  const needsAttention = statusInfo.needsAttention;
 
-  // Extract directory name from cwd
-  const dirName = cwd ? cwd.split("/").pop() || cwd : null;
+  // Extract directory name - use originalCwd (mother repo) if available, otherwise cwd
+  const displayCwd = originalCwd || cwd;
+  const dirName = displayCwd ? displayCwd.split("/").pop() || displayCwd : null;
 
-  // Create glow color variants for CSS variable
-  const glowColorBase = statusInfo.color;
+  // Get display name for current tool
+  const toolDisplay = currentTool ? (toolDisplayNames[currentTool] || currentTool) : null;
 
   return (
     <div
-      className={`relative w-[220px] rounded-lg transition-all duration-200 cursor-pointer ${
+      className={`relative w-[220px] rounded-lg transition-all duration-300 cursor-pointer ${
         selected ? "ring-1 ring-white/20" : ""
-      } ${isGlowing ? "animate-glow-pulse" : ""}`}
+      }`}
       style={{
         backgroundColor: "#1a1a1a",
-        border: isGlowing ? `1px solid ${statusInfo.color}60` : "1px solid #2a2a2a",
-        "--glow-color": glowColorBase,
-        boxShadow: isGlowing
-          ? `0 0 0 1px ${statusInfo.color}40, 0 0 20px ${statusInfo.color}50, 0 0 40px ${statusInfo.color}30, 0 4px 12px rgba(0, 0, 0, 0.5)`
-          : needsAttention
-          ? `0 0 0 1px ${statusInfo.color}80, 0 0 12px ${statusInfo.color}40, 0 4px 12px rgba(0, 0, 0, 0.5)`
+        border: needsAttention
+          ? `2px solid ${statusInfo.color}`
+          : isActive
+          ? `1px solid ${statusInfo.color}40`
+          : "1px solid #2a2a2a",
+        boxShadow: needsAttention
+          ? `0 0 16px ${statusInfo.color}40, 0 0 32px ${statusInfo.color}20, 0 4px 12px rgba(0, 0, 0, 0.4)`
+          : isActive
+          ? `0 0 12px ${statusInfo.color}15, 0 4px 12px rgba(0, 0, 0, 0.4)`
           : selected
           ? "0 8px 24px rgba(0, 0, 0, 0.6)"
           : "0 4px 12px rgba(0, 0, 0, 0.4)",
-      } as React.CSSProperties}
+      }}
     >
+      {/* Animated effects for different states */}
+      {isActive && !needsAttention && (
+        <div
+          className="absolute inset-0 rounded-lg pointer-events-none"
+          style={{
+            background: `linear-gradient(90deg, transparent, ${statusInfo.color}20, transparent)`,
+            backgroundSize: '200% 100%',
+            animation: 'shimmer 2s ease-in-out infinite',
+          }}
+        />
+      )}
+      {/* Pulsing border for attention states */}
+      {needsAttention && (
+        <div
+          className="absolute inset-0 rounded-lg pointer-events-none"
+          style={{
+            border: `2px solid ${statusInfo.color}`,
+            animation: 'attention-pulse 1.5s ease-in-out infinite',
+          }}
+        />
+      )}
+
       {/* Color bar at top */}
       <div className="h-1 rounded-t-lg" style={{ backgroundColor: displayColor }} />
 
-      {/* Status banner - prominent when needs attention */}
+      {/* Status banner */}
       <div
-        className="px-3 py-1.5 flex items-center justify-between"
+        className="px-3 py-1.5 flex items-center justify-between relative"
         style={{ backgroundColor: statusInfo.bgColor }}
       >
         <div className="flex items-center gap-2">
-          {statusInfo.animate ? (
-            <Loader2 className="w-3 h-3 animate-spin" style={{ color: statusInfo.color }} />
-          ) : (
+          {/* Status indicator - animated ring for active */}
+          <div className="relative flex items-center justify-center">
             <div
-              className="w-2.5 h-2.5 rounded-full"
+              className="w-2 h-2 rounded-full"
               style={{ backgroundColor: statusInfo.color }}
             />
-          )}
+            {isActive && (
+              <div
+                className="absolute w-3 h-3 rounded-full animate-ping"
+                style={{
+                  backgroundColor: statusInfo.color,
+                  opacity: 0.4,
+                  animationDuration: '1.5s'
+                }}
+              />
+            )}
+          </div>
           <span className="text-xs font-medium" style={{ color: statusInfo.color }}>
             {statusInfo.label}
           </span>
+          {/* Show current tool when tool_calling */}
+          {isToolCalling && toolDisplay && (
+            <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+              <Wrench className="w-2.5 h-2.5" />
+              {toolDisplay}
+            </span>
+          )}
         </div>
         {status === "waiting_input" && (
-          <MessageSquare className="w-4 h-4 text-orange-500" />
+          <MessageSquare className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
         )}
         {status === "disconnected" && (
-          <WifiOff className="w-4 h-4 text-red-500" />
+          <WifiOff className="w-3.5 h-3.5" style={{ color: statusInfo.color }} />
         )}
       </div>
 
-      <div className="p-3">
+      <div className="p-3 relative">
         {/* Agent name and icon */}
         <div className="flex items-center gap-2.5">
           <div
@@ -110,7 +172,7 @@ export function AgentNodeCard({
           </div>
         </div>
 
-        {/* Ticket info (placeholder for Linear integration) */}
+        {/* Ticket info */}
         {ticketId && (
           <div className="mt-2.5 px-2 py-1.5 rounded-md bg-indigo-500/10 border border-indigo-500/20">
             <div className="flex items-center gap-1.5">
@@ -140,39 +202,19 @@ export function AgentNodeCard({
           </div>
         )}
 
-        {/* Metrics for Claude agents - compact */}
-        {metrics && agentId === "claude" && (
-          <div className="mt-2.5 pt-2 border-t border-zinc-800">
-            {/* Context bar - full width, more prominent */}
-            <div className="flex items-center gap-2 mb-1.5">
-              <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all"
-                  style={{
-                    width: `${Math.min(metrics.contextPercent, 100)}%`,
-                    backgroundColor: metrics.contextPercent > 80 ? "#EF4444" : metrics.contextPercent > 50 ? "#FBBF24" : "#22C55E"
-                  }}
-                />
-              </div>
-              <span className="text-[10px] text-zinc-400 w-8 text-right font-mono">{Math.round(metrics.contextPercent)}%</span>
-            </div>
-
-            {/* Model, Cost, Lines in one row */}
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-cyan-400 font-medium">{metrics.model}</span>
-              <div className="flex items-center gap-2">
-                <span>
-                  <span className="text-green-400">+{metrics.linesAdded}</span>
-                  <span className="text-zinc-600 mx-0.5">/</span>
-                  <span className="text-red-400">-{metrics.linesRemoved}</span>
-                </span>
-                <span className="text-blue-400 font-mono">${metrics.cost.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
       </div>
+
+      {/* CSS for animations */}
+      <style>{`
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
+        @keyframes attention-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
+      `}</style>
     </div>
   );
 }

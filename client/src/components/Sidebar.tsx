@@ -15,17 +15,12 @@ import {
   Bot,
   Brain,
   Wand2,
-  BarChart3,
-  Activity,
-  DollarSign,
-  FileCode,
   GitBranch,
 } from "lucide-react";
 import { useStore, AgentStatus } from "../stores/useStore";
 import { Terminal } from "./Terminal";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
-  starting: { label: "Starting", color: "#FBBF24" },
   running: { label: "Running", color: "#22C55E" },
   waiting_input: { label: "Waiting for input", color: "#FBBF24" },
   tool_calling: { label: "Tool Calling", color: "#8B5CF6" },
@@ -346,109 +341,7 @@ export function Sidebar() {
               />
             </div>
 
-            {/* Enable metrics button - shown below terminal when no metrics */}
-            {session.agentId === "claude" && !session.metrics && (
-              <div className="flex-shrink-0 px-3 py-2 border-t border-border bg-purple-500/5">
-                <button
-                  onClick={() => {
-                    const ws = new WebSocket(`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws?sessionId=${session.sessionId}`);
-                    ws.onopen = () => {
-                      const prompt = `/statusline Create a statusline showing: model name, directory, lines added (+green) and removed (-red), context %, and cost. At the end include [OPENUI:{"m":"MODEL","c":COST,"la":ADDED,"lr":REMOVED,"cp":CONTEXT%,"it":IN_TOKENS,"ot":OUT_TOKENS,"s":"STATE"}] where STATE is idle/asking/working. Use jq to parse JSON. Make it colorful and readable.`;
-                      ws.send(JSON.stringify({ type: "input", data: prompt + "\r" }));
-                      ws.close();
-                    };
-                  }}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-purple-500/20 text-purple-300 text-xs font-medium hover:bg-purple-500/30 transition-colors border border-purple-500/30"
-                >
-                  <BarChart3 className="w-3 h-3" />
-                  Enable Metrics (statusline)
-                </button>
-              </div>
-            )}
           </div>
-
-          {/* Metrics Panel */}
-          {session.metrics && (
-            <div className="flex-shrink-0 border-t border-border bg-canvas-dark">
-              <div className="px-4 py-3">
-                <div className="flex items-center gap-2 mb-3">
-                  <Activity className="w-3.5 h-3.5 text-purple-400" />
-                  <span className="text-xs font-medium text-zinc-300">Session Metrics</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Context Usage */}
-                  <div className="bg-canvas rounded-lg p-2.5">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <BarChart3 className="w-3 h-3 text-zinc-500" />
-                      <span className="text-[10px] text-zinc-500">Context</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${Math.min(session.metrics.contextPercent, 100)}%`,
-                            backgroundColor: session.metrics.contextPercent > 80 ? "#EF4444" : session.metrics.contextPercent > 50 ? "#FBBF24" : "#22C55E"
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs font-mono text-zinc-300">{Math.round(session.metrics.contextPercent)}%</span>
-                    </div>
-                  </div>
-
-                  {/* Cost */}
-                  <div className="bg-canvas rounded-lg p-2.5">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <DollarSign className="w-3 h-3 text-zinc-500" />
-                      <span className="text-[10px] text-zinc-500">Cost</span>
-                    </div>
-                    <span className="text-sm font-mono text-zinc-300">${session.metrics.cost.toFixed(4)}</span>
-                  </div>
-
-                  {/* Lines Changed */}
-                  <div className="bg-canvas rounded-lg p-2.5">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <FileCode className="w-3 h-3 text-zinc-500" />
-                      <span className="text-[10px] text-zinc-500">Lines Changed</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-mono text-green-400">+{session.metrics.linesAdded}</span>
-                      <span className="text-sm font-mono text-red-400">-{session.metrics.linesRemoved}</span>
-                    </div>
-                  </div>
-
-                  {/* Tokens */}
-                  <div className="bg-canvas rounded-lg p-2.5">
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Activity className="w-3 h-3 text-zinc-500" />
-                      <span className="text-[10px] text-zinc-500">Tokens</span>
-                    </div>
-                    <div className="text-[10px] font-mono text-zinc-400">
-                      <span className="text-blue-400">{(session.metrics.inputTokens / 1000).toFixed(1)}k</span>
-                      {" → "}
-                      <span className="text-purple-400">{(session.metrics.outputTokens / 1000).toFixed(1)}k</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Reconfigure button */}
-                <button
-                  onClick={() => {
-                    const ws = new WebSocket(`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws?sessionId=${session.sessionId}`);
-                    ws.onopen = () => {
-                      const prompt = `/statusline Create a statusline showing: model name, directory, lines added (+green) and removed (-red), context %, and cost. At the end include [OPENUI:{"m":"MODEL","c":COST,"la":ADDED,"lr":REMOVED,"cp":CONTEXT%,"it":IN_TOKENS,"ot":OUT_TOKENS,"s":"STATE"}] where STATE is idle/asking/working. Use jq to parse JSON. Make it colorful and readable.`;
-                      ws.send(JSON.stringify({ type: "input", data: prompt + "\r" }));
-                      ws.close();
-                    };
-                  }}
-                  className="mt-3 w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-canvas text-zinc-500 text-[10px] font-medium hover:text-zinc-300 hover:bg-surface-active transition-colors"
-                >
-                  <BarChart3 className="w-3 h-3" />
-                  Reconfigure Statusline
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* Details */}
           <div className="flex-shrink-0 border-t border-border">
@@ -478,15 +371,6 @@ export function Sidebar() {
                   <span className="text-zinc-500">Branch</span>
                   <span className="text-purple-400 font-mono ml-auto">
                     {session.gitBranch}
-                  </span>
-                </div>
-              )}
-              {session.metrics?.model && (
-                <div className="flex items-center gap-2 text-xs">
-                  <Activity className="w-3 h-3 text-zinc-600 flex-shrink-0" />
-                  <span className="text-zinc-500">Model</span>
-                  <span className="text-cyan-400 font-mono ml-auto">
-                    {session.metrics.model}
                   </span>
                 </div>
               )}

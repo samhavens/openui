@@ -34,6 +34,7 @@ function AppContent() {
     setSelectedNodeId,
     setSidebarOpen,
     addSession,
+    updateSession,
     agents,
     addAgentModalOpen,
     setAddAgentModalOpen,
@@ -71,6 +72,35 @@ function AppContent() {
       .then((agents) => setAgents(agents))
       .catch(console.error);
   }, [setAgents, setLaunchCwd]);
+
+  // Poll for status updates every second to catch any missed WebSocket messages
+  useEffect(() => {
+    const pollStatus = async () => {
+      try {
+        const res = await fetch("/api/sessions");
+        if (res.ok) {
+          const sessionsData = await res.json();
+          const currentSessions = useStore.getState().sessions;
+          for (const sessionData of sessionsData) {
+            if (sessionData.nodeId && sessionData.status) {
+              const existing = currentSessions.get(sessionData.nodeId);
+              if (existing && existing.status !== sessionData.status) {
+                console.log(`[poll] Updating ${sessionData.nodeId} status: ${existing.status} -> ${sessionData.status}`);
+                updateSession(sessionData.nodeId, { status: sessionData.status });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    };
+
+    // Poll immediately and then every second
+    pollStatus();
+    const interval = setInterval(pollStatus, 1000);
+    return () => clearInterval(interval);
+  }, [updateSession]);
 
   // Restore sessions and categories after agents are loaded
   useEffect(() => {
@@ -119,6 +149,7 @@ function AppContent() {
             color: session.customColor || agent?.color || "#888",
             createdAt: session.createdAt,
             cwd: session.cwd,
+            originalCwd: session.originalCwd,
             gitBranch: session.gitBranch,
             status: session.status || "idle",
             customName: session.customName,

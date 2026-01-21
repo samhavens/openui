@@ -10,18 +10,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "starting" | "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
-
-export interface ClaudeMetrics {
-  model: string;
-  cost: number;
-  linesAdded: number;
-  linesRemoved: number;
-  contextPercent: number;
-  inputTokens: number;
-  outputTokens: number;
-  state?: "idle" | "asking" | "working";
-}
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface AgentSession {
   id: string;
@@ -32,16 +21,18 @@ export interface AgentSession {
   color: string;
   createdAt: string;
   cwd: string;
+  originalCwd?: string; // Mother repo path when using worktrees
   gitBranch?: string;
   status: AgentStatus;
   customName?: string;
   customColor?: string;
   notes?: string;
   isRestored?: boolean;
-  metrics?: ClaudeMetrics;
   // Linear ticket info
   ticketId?: string;
   ticketTitle?: string;
+  // Current tool being used (from plugin)
+  currentTool?: string;
 }
 
 interface AppState {

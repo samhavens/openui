@@ -1,12 +1,23 @@
 {
+  "description": "OpenUI status reporting hooks",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "",
+        "matcher": "AskUserQuestion",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh tool_calling",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh waiting_input",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh pre_tool",
             "timeout": 5
           }
         ]
@@ -14,11 +25,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh running",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh post_tool",
             "timeout": 5
           }
         ]
@@ -26,10 +37,11 @@
     ],
     "UserPromptSubmit": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh running",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh running",
             "timeout": 5
           }
         ]
@@ -37,10 +49,11 @@
     ],
     "Stop": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh idle",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh idle",
             "timeout": 5
           }
         ]
@@ -48,10 +61,11 @@
     ],
     "SubagentStop": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh running",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh idle",
             "timeout": 5
           }
         ]
@@ -63,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh waiting_input",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh waiting_input",
             "timeout": 5
           }
         ]
@@ -71,10 +85,11 @@
     ],
     "SessionStart": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh starting",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh waiting_input",
             "timeout": 5
           }
         ]
@@ -82,10 +97,11 @@
     ],
     "SessionEnd": [
       {
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PLUGIN_ROOT\"/hooks/status-reporter.sh disconnected",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh disconnected",
             "timeout": 5
           }
         ]

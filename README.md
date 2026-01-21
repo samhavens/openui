@@ -19,7 +19,6 @@ OpenUI gives you a visual command center where each agent is a node on a canvas:
 - **At-a-glance status**: See which agents are working, idle, or need input
 - **Ticket integration**: Start sessions from Linear tickets (more integrations coming)
 - **Branch isolation**: Each agent works in its own git worktree
-- **Real-time metrics**: Cost, context usage, lines changed per agent
 - **Organized workspace**: Categories, custom colors, drag-and-drop layout
 
 ## Installation
@@ -52,8 +51,7 @@ bunx @fallom/openui
 - Persistent layout across restarts
 
 ### Agent Monitoring
-- Real-time status: Starting, Running, Idle, Needs Input, Tool Calling
-- Claude metrics: Model, cost, context %, tokens, lines changed
+- Real-time status: Running, Idle, Needs Input, Tool Calling
 - Git branch display per agent
 - Directory/repo info
 - Redesigned node cards for better at-a-glance visibility
@@ -105,19 +103,47 @@ OpenUI runs a local server that:
 ## Development
 
 ```bash
-git clone https://github.com/anthropics/openui.git
+git clone https://github.com/Fallomai/openui.git
 cd openui
 
 bun install
 cd client && bun install && cd ..
 
-bun run dev  # Server on 6968, UI on 6969
+bun run dev  # Server on 4242, UI on 6969
+```
+
+### Testing with the Claude Code Plugin
+
+For development, OpenUI automatically loads the plugin from the repo's `claude-code-plugin/` directory if present. Just run `bun run dev` and the plugin will be injected when spawning Claude agents.
+
+You can also test manually:
+```bash
+claude --plugin-dir $(pwd)/claude-code-plugin
 ```
 
 ## Requirements
 
 - Bun 1.0+
 - One of: Claude Code, OpenCode, or Ralph Loop
+
+### Claude Code Plugin (Recommended)
+
+For accurate real-time status updates, install the OpenUI plugin for Claude Code.
+
+**Option 1: Marketplace (in Claude Code)**
+```
+/plugin marketplace add Fallomai/openui
+/plugin install openui-status@openui-plugins
+```
+
+**Option 2: Curl (auto-loaded by OpenUI)**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin/install.sh | bash
+```
+
+This enables precise status detection (Working, Using Tools, Idle, Waiting for Input) via Claude Code hooks instead of terminal output parsing.
+
+See [claude-code-plugin/README.md](./claude-code-plugin/README.md) for more details.
 
 ### Optional: Ralph Loop
 

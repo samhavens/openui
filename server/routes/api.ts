@@ -1,8 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, scanBufferForMetrics } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir } from "../services/persistence";
-import { detectStatus } from "../services/statusDetector";
 import {
   loadConfig,
   saveConfig,
@@ -64,13 +63,6 @@ apiRoutes.get("/browse", async (c) => {
   }
 });
 
-// Statusline setup prompt for Claude Code metrics integration
-const STATUSLINE_PROMPT = `/statusline Create a custom status line that outputs metrics for OpenUI integration. It should show model name, directory, lines changed, context %, and cost. At the end include: [OPENUI:{"m":"MODEL","c":COST,"la":LINES_ADDED,"lr":LINES_REMOVED,"cp":CONTEXT_PERCENT,"it":INPUT_TOKENS,"ot":OUTPUT_TOKENS,"s":"STATE"}] where STATE is "idle", "asking", or "working" based on the current claude state. Use jq to parse the JSON input. Make the script and save it.`;
-
-apiRoutes.get("/statusline-prompt", (c) => {
-  return c.json({ prompt: STATUSLINE_PROMPT });
-});
-
 apiRoutes.get("/agents", (c) => {
   const agents: Agent[] = [
     {
@@ -101,25 +93,8 @@ apiRoutes.get("/agents", (c) => {
   return c.json(agents);
 });
 
-// Cache for scanned metrics to avoid re-scanning on every request
-const metricsCache = new Map<string, { metrics: any; timestamp: number }>();
-const METRICS_CACHE_TTL = 2000; // 2 seconds
-
 apiRoutes.get("/sessions", (c) => {
-  const now = Date.now();
   const sessionList = Array.from(sessions.entries()).map(([id, session]) => {
-    session.status = detectStatus(session);
-    // Scan buffer for metrics with caching (only for claude sessions)
-    if (session.agentId === "claude") {
-      const cached = metricsCache.get(id);
-      if (!cached || now - cached.timestamp > METRICS_CACHE_TTL) {
-        const scannedMetrics = scanBufferForMetrics(session);
-        if (scannedMetrics) {
-          session.metrics = scannedMetrics;
-          metricsCache.set(id, { metrics: scannedMetrics, timestamp: now });
-        }
-      }
-    }
     return {
       sessionId: id,
       nodeId: session.nodeId,
@@ -128,14 +103,13 @@ apiRoutes.get("/sessions", (c) => {
       command: session.command,
       createdAt: session.createdAt,
       cwd: session.cwd,
+      originalCwd: session.originalCwd, // Mother repo path when using worktrees
       gitBranch: session.gitBranch,
       status: session.status,
       customName: session.customName,
       customColor: session.customColor,
       notes: session.notes,
       isRestored: session.isRestored,
-      metrics: session.metrics,
-      // Ticket info
       ticketId: session.ticketId,
       ticketTitle: session.ticketTitle,
     };
@@ -148,7 +122,6 @@ apiRoutes.get("/sessions/:sessionId/status", (c) => {
   const session = sessions.get(sessionId);
   if (!session) return c.json({ error: "Session not found" }, 404);
 
-  session.status = detectStatus(session);
   return c.json({ status: session.status, isRestored: session.isRestored });
 });
 
@@ -158,7 +131,7 @@ apiRoutes.get("/state", (c) => {
     const session = sessions.get(node.sessionId);
     return {
       ...node,
-      status: session ? detectStatus(session) : "disconnected",
+      status: session?.status || "disconnected",
       isAlive: !!session,
       isRestored: session?.isRestored,
     };
@@ -254,7 +227,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
   session.pty = ptyProcess;
   session.isRestored = false;
-  session.status = "starting";
+  session.status = "running";
   session.lastOutputTime = Date.now();
 
   const resetInterval = setInterval(() => {
@@ -281,8 +254,9 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     }
   });
 
+  const finalCommand = injectPluginDir(session.command, session.agentId);
   setTimeout(() => {
-    ptyProcess.write(`${session.command}\r`);
+    ptyProcess.write(`${finalCommand}\r`);
   }, 300);
 
   log(`\x1b[38;5;141m[session]\x1b[0m Restarted ${sessionId}`);
@@ -316,19 +290,28 @@ apiRoutes.delete("/sessions/:sessionId", (c) => {
 
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
-  const { status, sessionId, cwd } = await c.req.json();
+  const body = await c.req.json();
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason } = body;
+
+  // Log the full raw payload for debugging
+  log(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}`);
+  log(`\x1b[38;5;245m[plugin-raw]\x1b[0m ${JSON.stringify(body, null, 2)}`);
 
   if (!status) {
     return c.json({ error: "status is required" }, 400);
   }
 
-  // Find session by cwd if sessionId not provided (plugin may not have session ID)
-  let session = sessionId ? sessions.get(sessionId) : null;
+  let session = null;
 
-  if (!session && cwd) {
-    // Find session by matching cwd
-    for (const [, s] of sessions) {
-      if (s.cwd === cwd || s.cwd.startsWith(cwd) || cwd.startsWith(s.cwd)) {
+  // Primary: Use OpenUI session ID if provided (this is definitive)
+  if (openuiSessionId) {
+    session = sessions.get(openuiSessionId);
+  }
+
+  // Fallback: Try to match by Claude session ID (for older plugin versions)
+  if (!session && claudeSessionId) {
+    for (const [id, s] of sessions) {
+      if (s.claudeSessionId === claudeSessionId) {
         session = s;
         break;
       }
@@ -336,10 +319,70 @@ apiRoutes.post("/status-update", async (c) => {
   }
 
   if (session) {
-    session.status = status;
+    // Store Claude session ID mapping if we have it
+    if (claudeSessionId && !session.claudeSessionId) {
+      session.claudeSessionId = claudeSessionId;
+    }
+
+    // Handle pre_tool/post_tool for permission detection
+    let effectiveStatus = status;
+
+    if (status === "pre_tool") {
+      // PreToolUse fired - tool is about to run (or waiting for permission)
+      // Stay as running, track the tool, and start a timer
+      effectiveStatus = "running";
+      session.currentTool = toolName;
+      session.preToolTime = Date.now();
+
+      // Clear any existing permission timeout
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+      }
+
+      // If we don't get post_tool within 2.5 seconds, assume waiting for permission
+      session.permissionTimeout = setTimeout(() => {
+        // Only switch to waiting_input if we haven't received post_tool yet
+        if (session.preToolTime) {
+          session.status = "waiting_input";
+          // Broadcast the status change
+          for (const client of session.clients) {
+            if (client.readyState === 1) {
+              client.send(JSON.stringify({
+                type: "status",
+                status: "waiting_input",
+                isRestored: session.isRestored,
+                currentTool: session.currentTool,
+                hookEvent: "permission_timeout",
+              }));
+            }
+          }
+        }
+      }, 2500);
+    } else if (status === "post_tool") {
+      // PostToolUse fired - tool completed, clear the permission timeout
+      effectiveStatus = "running";
+      session.preToolTime = undefined;
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+        session.permissionTimeout = undefined;
+      }
+      // Keep currentTool to show what just ran
+    } else {
+      // For other statuses, clear tool tracking if not actively using tools
+      if (status !== "tool_calling" && status !== "running") {
+        session.currentTool = undefined;
+      }
+      session.preToolTime = undefined;
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+        session.permissionTimeout = undefined;
+      }
+    }
+
+    session.status = effectiveStatus;
     session.pluginReportedStatus = true;
     session.lastPluginStatusTime = Date.now();
-    log(`\x1b[38;5;141m[plugin]\x1b[0m Status update: ${status} for ${cwd || sessionId}`);
+    session.lastHookEvent = hookEvent;
 
     // Broadcast status change to connected clients
     for (const client of session.clients) {
@@ -347,7 +390,9 @@ apiRoutes.post("/status-update", async (c) => {
         client.send(JSON.stringify({
           type: "status",
           status: session.status,
-          isRestored: session.isRestored
+          isRestored: session.isRestored,
+          currentTool: session.currentTool,
+          hookEvent: hookEvent,
         }));
       }
     }
@@ -355,8 +400,8 @@ apiRoutes.post("/status-update", async (c) => {
     return c.json({ success: true });
   }
 
-  // Even if no session found, log it (might be useful for debugging)
-  log(`\x1b[38;5;141m[plugin]\x1b[0m Status update (no session): ${status} for ${cwd || sessionId}`);
+  // No session found
+  log(`\x1b[38;5;141m[plugin]\x1b[0m Status update (no session): ${status} for openui:${openuiSessionId} claude:${claudeSessionId}`);
   return c.json({ success: true, warning: "No matching session found" });
 });
 

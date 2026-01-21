@@ -1,71 +1,72 @@
 # OpenUI Status Plugin for Claude Code
 
-This plugin reports Claude Code agent status to OpenUI in real-time, enabling accurate status display (Working, Using Tools, Idle, etc.) on your agent nodes.
+Reports Claude Code agent status to OpenUI in real-time for accurate status display (Working, Using Tools, Idle, etc.).
 
 ## Installation
 
-### For Development / Testing
+### Option 1: Marketplace Install (Recommended)
 
-Run Claude Code with the plugin directory flag:
+In Claude Code, run:
+
+```
+/plugin marketplace add Fallomai/openui
+/plugin install openui-status@openui-plugins
+```
+
+### Option 2: Curl Install (Auto-loaded by OpenUI)
 
 ```bash
-claude --plugin-dir /path/to/openui/claude-code-plugin
+curl -fsSL https://raw.githubusercontent.com/Fallomai/openui/main/claude-code-plugin/install.sh | bash
 ```
 
-### For Permanent Use
-
-Add the plugin directory to your Claude Code settings (`~/.claude/settings.json`):
-
-```json
-{
-  "plugins": ["/path/to/openui/claude-code-plugin"]
-}
-```
-
-Or if you cloned/installed OpenUI globally, you can reference it directly.
-
-## Configuration
-
-The plugin uses these environment variables (with defaults):
-
-- `OPENUI_HOST` - OpenUI server host (default: `localhost`)
-- `OPENUI_PORT` - OpenUI server port (default: `4242`)
-
-If your OpenUI server runs on a different port, set these before starting Claude Code:
-
-```bash
-export OPENUI_PORT=8080
-claude --plugin-dir /path/to/openui/claude-code-plugin
-```
+This installs to `~/.openui/claude-code-plugin/`. OpenUI automatically uses it when starting Claude agents.
 
 ## How It Works
 
-The plugin uses Claude Code hooks to detect status changes:
+The plugin uses Claude Code hooks to report status:
 
-| Hook Event | Status Reported |
-|------------|-----------------|
+| Hook Event | Status |
+|------------|--------|
 | `SessionStart` | `starting` |
 | `UserPromptSubmit` | `running` |
 | `PreToolUse` | `tool_calling` |
 | `PostToolUse` | `running` |
 | `Stop` | `idle` |
-| `SubagentStop` | `running` |
 | `Notification` (idle_prompt) | `waiting_input` |
 | `SessionEnd` | `disconnected` |
 
-Status updates are sent via HTTP POST to `http://{OPENUI_HOST}:{OPENUI_PORT}/api/status-update`.
+## Configuration
 
-## Verifying Installation
+The plugin sends status to `localhost:4242` by default. To change:
 
-1. Start Claude Code with the plugin: `claude --plugin-dir /path/to/openui/claude-code-plugin`
-2. Run `/plugins` to see installed plugins - you should see `openui-status`
-3. Start working - OpenUI should now show accurate status updates
+```bash
+export OPENUI_HOST=localhost
+export OPENUI_PORT=4242
+```
+
+## Verify Installation
+
+In Claude Code:
+```
+/plugins
+```
+
+You should see `openui-status` listed.
 
 ## Troubleshooting
 
-If status isn't updating:
+1. Check plugin is loaded: `/plugins`
+2. Check OpenUI is running on port 4242
+3. Check OpenUI server logs for `[plugin]` messages
 
-1. Verify plugin is loaded: run `/plugins` in Claude Code
-2. Check OpenUI server is running on the expected port
-3. Check OpenUI server logs for incoming status updates (look for `[plugin]` messages)
-4. Ensure the `hooks/status-reporter.sh` script is executable (`chmod +x`)
+## Uninstall
+
+**Marketplace install:**
+```
+/plugin uninstall openui-status@openui-plugins
+```
+
+**Curl install:**
+```bash
+rm -rf ~/.openui/claude-code-plugin
+```

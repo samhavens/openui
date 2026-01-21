@@ -2,13 +2,61 @@ import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
 import { existsSync, mkdirSync } from "fs";
 import { join, basename } from "path";
-import type { Session, ClaudeMetrics } from "../types";
+import { homedir } from "os";
+import type { Session } from "../types";
 import { loadBuffer } from "./persistence";
-import { detectStatus } from "./statusDetector";
 
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
 const logError = QUIET ? () => {} : console.error.bind(console);
+
+// Get the OpenUI plugin directory path
+function getPluginDir(): string | null {
+  // Check for plugin in ~/.openui/claude-code-plugin (installed via curl)
+  const homePluginDir = join(homedir(), ".openui", "claude-code-plugin");
+  const homePluginJson = join(homePluginDir, ".claude-plugin", "plugin.json");
+  log(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking home: ${homePluginJson} exists=${existsSync(homePluginJson)}`);
+  if (existsSync(homePluginJson)) {
+    return homePluginDir;
+  }
+
+  // Check for plugin in the openui repo (for development)
+  // Use import.meta.dir for ESM compatibility
+  const currentDir = import.meta.dir || __dirname;
+  const repoPluginDir = join(currentDir, "..", "..", "claude-code-plugin");
+  const repoPluginJson = join(repoPluginDir, ".claude-plugin", "plugin.json");
+  log(`\x1b[38;5;245m[plugin-check]\x1b[0m Checking repo: ${repoPluginJson} exists=${existsSync(repoPluginJson)}`);
+  if (existsSync(repoPluginJson)) {
+    return repoPluginDir;
+  }
+
+  log(`\x1b[38;5;245m[plugin-check]\x1b[0m No plugin found`);
+  return null;
+}
+
+// Inject --plugin-dir flag for Claude commands if plugin is available
+export function injectPluginDir(command: string, agentId: string): string {
+  if (agentId !== "claude") return command;
+
+  const pluginDir = getPluginDir();
+  if (!pluginDir) return command;
+
+  // Check if command already has --plugin-dir
+  if (command.includes("--plugin-dir")) return command;
+
+  // Insert --plugin-dir after 'claude'
+  const parts = command.split(/\s+/);
+  if (parts[0] === "claude") {
+    // Use the path directly without quotes - shell will handle it
+    parts.splice(1, 0, `--plugin-dir`, pluginDir);
+    const finalCmd = parts.join(" ");
+    log(`\x1b[38;5;141m[plugin]\x1b[0m Injecting plugin-dir: ${pluginDir}`);
+    log(`\x1b[38;5;141m[plugin]\x1b[0m Final command: ${finalCmd}`);
+    return finalCmd;
+  }
+
+  return command;
+}
 
 // Get git branch for a directory
 function getGitBranch(cwd: string): string | null {
@@ -27,7 +75,7 @@ function getGitBranch(cwd: string): string | null {
   return null;
 }
 
-// Get git root directory
+// Get git root directory (returns worktree path if in a worktree)
 function getGitRoot(cwd: string): string | null {
   try {
     const result = spawnSync(["git", "rev-parse", "--show-toplevel"], {
@@ -40,6 +88,29 @@ function getGitRoot(cwd: string): string | null {
     }
   } catch {
     // Not a git repo
+  }
+  return null;
+}
+
+// Get the main worktree (mother repo) path - works from any worktree
+function getMainWorktree(cwd: string): string | null {
+  try {
+    // git worktree list shows all worktrees, first one is always the main
+    const result = spawnSync(["git", "worktree", "list", "--porcelain"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode === 0) {
+      const output = result.stdout.toString();
+      // First "worktree" line is the main repo
+      const match = output.match(/^worktree (.+)$/m);
+      if (match) {
+        return match[1];
+      }
+    }
+  } catch {
+    // Not a git repo or worktree command failed
   }
   return null;
 }
@@ -129,57 +200,6 @@ export function createWorktree(params: {
   return { success: true, worktreePath };
 }
 
-// Parse OpenUI metrics from statusline output
-// Format: [OPENUI:{"m":"Opus","c":0.01,"la":10,"lr":5,"cp":25,"it":1000,"ot":500,"s":"idle"}]
-function parseMetrics(data: string): ClaudeMetrics | null {
-  // Strip ANSI codes first
-  const cleanData = data.replace(/\x1b\[[0-9;]*m/g, '');
-
-  // Remove newlines/whitespace that might break the JSON
-  const normalized = cleanData.replace(/\s+/g, ' ');
-
-  // Find complete JSON objects - match from { to } ensuring we have all keys
-  const matches = normalized.match(/\[OPENUI:\{[^}]+\}\]/g);
-  if (!matches || matches.length === 0) return null;
-
-  // Try each match from the end (most recent first)
-  for (let i = matches.length - 1; i >= 0; i--) {
-    const match = matches[i];
-    // Extract just the JSON part
-    const jsonStr = match.slice(8, -1); // Remove "[OPENUI:" and "]"
-
-    try {
-      const json = JSON.parse(jsonStr);
-      // Validate it has the expected fields
-      if (json.m !== undefined || json.c !== undefined) {
-        return {
-          model: json.m || "Claude",
-          cost: typeof json.c === 'number' ? json.c : parseFloat(json.c) || 0,
-          linesAdded: json.la || 0,
-          linesRemoved: json.lr || 0,
-          contextPercent: json.cp || 0,
-          inputTokens: json.it || 0,
-          outputTokens: json.ot || 0,
-          state: json.s || undefined,
-        };
-      }
-    } catch {
-      // Try next match
-      continue;
-    }
-  }
-
-  return null;
-}
-
-// Scan buffer for metrics (call periodically)
-export function scanBufferForMetrics(session: Session): ClaudeMetrics | null {
-  if (session.agentId !== "claude") return null;
-  const buffer = session.outputBuffer.join("");
-  // Only scan the last ~5000 chars for performance
-  const recentBuffer = buffer.slice(-5000);
-  return parseMetrics(recentBuffer);
-}
 
 const MAX_BUFFER_SIZE = 1000;
 
@@ -223,6 +243,7 @@ export function createSession(params: {
 
   let workingDir = originalCwd;
   let worktreePath: string | undefined;
+  let mainRepoPath: string | undefined;
   let gitBranch: string | null = null;
 
   // If worktree requested, create it and use that path
@@ -235,10 +256,20 @@ export function createSession(params: {
     if (result.success && result.worktreePath) {
       workingDir = result.worktreePath;
       worktreePath = result.worktreePath;
+      mainRepoPath = originalCwd; // The original cwd is the main repo
       gitBranch = branchName;
-      log(`\x1b[38;5;141m[session]\x1b[0m Using worktree: ${workingDir}`);
+      log(`\x1b[38;5;141m[session]\x1b[0m Using worktree: ${workingDir}, main repo: ${mainRepoPath}`);
     } else {
       logError(`\x1b[38;5;141m[session]\x1b[0m Failed to create worktree:`, result.error);
+    }
+  }
+
+  // If no explicit worktree but we're in a worktree, detect the main repo
+  if (!mainRepoPath) {
+    const detectedMainRepo = getMainWorktree(workingDir);
+    if (detectedMainRepo && detectedMainRepo !== workingDir) {
+      mainRepoPath = detectedMainRepo;
+      log(`\x1b[38;5;141m[session]\x1b[0m Detected main repo from worktree: ${mainRepoPath}`);
     }
   }
 
@@ -250,7 +281,12 @@ export function createSession(params: {
   const ptyProcess = spawnPty("/bin/bash", [], {
     name: "xterm-256color",
     cwd: workingDir,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: {
+      ...process.env,
+      TERM: "xterm-256color",
+      // Pass our session ID so the plugin can include it in status updates
+      OPENUI_SESSION_ID: sessionId,
+    },
     rows: 30,
     cols: 120,
   });
@@ -262,12 +298,13 @@ export function createSession(params: {
     agentName,
     command,
     cwd: workingDir,
+    originalCwd: mainRepoPath, // Store mother repo when using worktree
     gitBranch: gitBranch || undefined,
     worktreePath,
     createdAt: new Date().toISOString(),
     clients: new Set(),
     outputBuffer: [],
-    status: "starting",
+    status: "idle",
     lastOutputTime: now,
     lastInputTime: 0,
     recentOutputSize: 0,
@@ -293,11 +330,6 @@ export function createSession(params: {
 
   // PTY output handler
   ptyProcess.onData((data: string) => {
-    // Debug: log if we see OPENUI in the data
-    if (data.includes("OPENUI")) {
-      log(`\x1b[38;5;141m[pty-data]\x1b[0m Found OPENUI in chunk:`, data.length, "chars");
-    }
-
     session.outputBuffer.push(data);
     if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
       session.outputBuffer.shift();
@@ -306,43 +338,19 @@ export function createSession(params: {
     session.lastOutputTime = Date.now();
     session.recentOutputSize += data.length;
 
-    // Parse metrics from statusline (for Claude agents)
-    if (agentId === "claude") {
-      const metrics = parseMetrics(data);
-      if (metrics) {
-        log(`\x1b[38;5;141m[metrics]\x1b[0m Parsed:`, JSON.stringify(metrics));
-        session.metrics = metrics;
-        // Broadcast metrics update
-        for (const client of session.clients) {
-          if (client.readyState === 1) {
-            client.send(JSON.stringify({ type: "metrics", metrics }));
-          }
-        }
-      }
-    }
-
-    const newStatus = detectStatus(session);
-    const statusChanged = newStatus !== session.status;
-    session.status = newStatus;
-
+    // Just broadcast output - status comes from plugin hooks
     for (const client of session.clients) {
       if (client.readyState === 1) {
         client.send(JSON.stringify({ type: "output", data }));
-
-        if (statusChanged) {
-          client.send(JSON.stringify({
-            type: "status",
-            status: session.status,
-            isRestored: session.isRestored
-          }));
-        }
       }
     }
   });
 
-  // Run the command
+  // Run the command (inject plugin-dir for Claude if available)
+  const finalCommand = injectPluginDir(command, agentId);
+  log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
   setTimeout(() => {
-    ptyProcess.write(`${command}\r`);
+    ptyProcess.write(`${finalCommand}\r`);
 
     // If there's a ticket URL, send it to the agent after a delay
     if (ticketUrl) {

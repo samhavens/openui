@@ -1,7 +1,7 @@
 import type { IPty } from "bun-pty";
 import type { ServerWebSocket } from "bun";
 
-export type AgentStatus = "starting" | "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
 
 export interface Session {
   pty: IPty | null;
@@ -9,6 +9,7 @@ export interface Session {
   agentName: string;
   command: string;
   cwd: string;
+  originalCwd?: string; // The mother repo path when using worktrees
   gitBranch?: string;
   worktreePath?: string;
   createdAt: string;
@@ -23,7 +24,6 @@ export interface Session {
   notes?: string;
   nodeId: string;
   isRestored?: boolean;
-  metrics?: ClaudeMetrics;
   position?: { x: number; y: number };
   // Linear ticket info
   ticketId?: string;
@@ -32,6 +32,15 @@ export interface Session {
   // Plugin-reported status
   pluginReportedStatus?: boolean;
   lastPluginStatusTime?: number;
+  // Claude Code's internal session ID (different from our sessionId)
+  claudeSessionId?: string;
+  // Current tool being used (from plugin)
+  currentTool?: string;
+  // Last hook event received
+  lastHookEvent?: string;
+  // Permission detection
+  preToolTime?: number;
+  permissionTimeout?: ReturnType<typeof setTimeout>;
 }
 
 export interface LinearTicket {
@@ -51,17 +60,6 @@ export interface LinearConfig {
   defaultBaseBranch?: string;
   createWorktree?: boolean;
   ticketPromptTemplate?: string;
-}
-
-export interface ClaudeMetrics {
-  model: string;
-  cost: number;
-  linesAdded: number;
-  linesRemoved: number;
-  contextPercent: number;
-  inputTokens: number;
-  outputTokens: number;
-  state?: "idle" | "asking" | "working";
 }
 
 export interface PersistedNode {

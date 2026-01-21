@@ -21,6 +21,7 @@ import {
   Brain,
   RefreshCw,
 } from "lucide-react";
+import { useReactFlow } from "@xyflow/react";
 import { useStore, Agent, AgentSession } from "../stores/useStore";
 
 const iconMap: Record<string, any> = {
@@ -61,6 +62,81 @@ interface NewSessionModalProps {
 
 type TabType = "blank" | "linear" | "github";
 
+// Node dimensions for collision detection
+const NODE_WIDTH = 200;
+const NODE_HEIGHT = 120;
+const SPACING = 24; // Grid snap size
+
+// Find a free position near the target that doesn't overlap existing nodes
+function findFreePosition(
+  targetX: number,
+  targetY: number,
+  existingNodes: { position?: { x: number; y: number } }[],
+  count: number = 1
+): { x: number; y: number }[] {
+  const positions: { x: number; y: number }[] = [];
+  const GRID = SPACING;
+
+  // Snap target to grid
+  const startX = Math.round(targetX / GRID) * GRID;
+  const startY = Math.round(targetY / GRID) * GRID;
+
+  // Filter to only nodes with valid positions
+  const validNodes = existingNodes.filter(
+    (n): n is { position: { x: number; y: number } } =>
+      n.position !== undefined &&
+      typeof n.position.x === 'number' &&
+      typeof n.position.y === 'number'
+  );
+
+  // Check if a position overlaps with any existing node or already-placed new node
+  const isOverlapping = (x: number, y: number, placedPositions: { x: number; y: number }[]) => {
+    const allPositions = [...validNodes.map(n => n.position), ...placedPositions];
+    for (const pos of allPositions) {
+      const overlapX = Math.abs(x - pos.x) < NODE_WIDTH + SPACING;
+      const overlapY = Math.abs(y - pos.y) < NODE_HEIGHT + SPACING;
+      if (overlapX && overlapY) return true;
+    }
+    return false;
+  };
+
+  // Spiral outward from target position to find free spots
+  for (let i = 0; i < count; i++) {
+    let found = false;
+    let radius = 0;
+    const maxRadius = 20; // Max search radius in grid units
+
+    while (!found && radius <= maxRadius) {
+      // Try positions in a spiral pattern
+      for (let dx = -radius; dx <= radius && !found; dx++) {
+        for (let dy = -radius; dy <= radius && !found; dy++) {
+          // Only check positions on the current ring
+          if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue;
+
+          const x = startX + dx * (NODE_WIDTH + SPACING);
+          const y = startY + dy * (NODE_HEIGHT + SPACING);
+
+          if (!isOverlapping(x, y, positions)) {
+            positions.push({ x, y });
+            found = true;
+          }
+        }
+      }
+      radius++;
+    }
+
+    // Fallback if no free position found
+    if (!found) {
+      positions.push({
+        x: startX + i * (NODE_WIDTH + SPACING),
+        y: startY,
+      });
+    }
+  }
+
+  return positions;
+}
+
 export function NewSessionModal({
   open,
   onClose,
@@ -75,6 +151,9 @@ export function NewSessionModal({
     nodes,
     launchCwd,
   } = useStore();
+
+  // Get ReactFlow instance to access viewport
+  const reactFlowInstance = useReactFlow();
 
   const isReplacing = !!existingSession;
 
@@ -350,7 +429,7 @@ export function NewSessionModal({
             agentName: selectedAgent.name,
             command: fullCommand,
             cwd: newCwd || workingDir,
-            status: "starting",
+            status: "idle",
             isRestored: false,
             ticketId: selectedTicket?.identifier || (selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined),
             ticketTitle: selectedTicket?.title || selectedGithubIssue?.title,
@@ -359,13 +438,18 @@ export function NewSessionModal({
         }
       } else {
         // Creating new agent(s)
-        const SPACING_X = 220;
-        const maxX = nodes.length > 0
-          ? Math.max(...nodes.map((n) => n.position.x)) + SPACING_X
-          : 100;
-        const startY = nodes.length > 0
-          ? Math.min(...nodes.filter((n) => n.type === "agent").map((n) => n.position.y))
-          : 100;
+        // Get the center of the current viewport
+        const viewport = reactFlowInstance.getViewport();
+        const viewportBounds = document.querySelector('.react-flow')?.getBoundingClientRect();
+        const viewportWidth = viewportBounds?.width || window.innerWidth;
+        const viewportHeight = viewportBounds?.height || window.innerHeight;
+
+        // Convert viewport center to flow coordinates
+        const centerX = (-viewport.x + viewportWidth / 2) / viewport.zoom;
+        const centerY = (-viewport.y + viewportHeight / 2) / viewport.zoom;
+
+        // Find free positions near viewport center for all new agents
+        const freePositions = findFreePosition(centerX, centerY, nodes, count);
 
         for (let i = 0; i < count; i++) {
           const nodeId = `node-${Date.now()}-${i}`;
@@ -405,8 +489,7 @@ export function NewSessionModal({
 
           const { sessionId, gitBranch, cwd: newCwd } = await res.json();
 
-          const x = (nodes.length === 0 ? 100 : maxX) + i * SPACING_X;
-          const y = startY || 100;
+          const { x, y } = freePositions[i];
 
           addNode({
             id: nodeId,
@@ -431,7 +514,7 @@ export function NewSessionModal({
             createdAt: new Date().toISOString(),
             cwd: newCwd || workingDir,
             gitBranch: gitBranch || branchName || undefined,
-            status: "starting",
+            status: "idle",
             customName: count > 1 ? agentName : customName || undefined,
             ticketId: i === 0 ? (selectedTicket?.identifier || (selectedGithubIssue ? `#${selectedGithubIssue.number}` : undefined)) : undefined,
             ticketTitle: i === 0 ? (selectedTicket?.title || selectedGithubIssue?.title) : undefined,
