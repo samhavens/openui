@@ -157,15 +157,37 @@ export function Sidebar() {
               <div className="space-y-3">
                 <div>
                   <p className="text-sm text-red-400 font-medium">Session Disconnected</p>
-                  <p className="text-xs text-red-400/70 mt-0.5">The agent was stopped. Start a new session.</p>
+                  <p className="text-xs text-red-400/70 mt-0.5">Resume to continue or start fresh.</p>
                 </div>
-                <button
-                  onClick={handleNewSession}
-                  className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  New Session
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      // Call restart endpoint to resume the session
+                      try {
+                        const res = await fetch(`/api/sessions/${session.sessionId}/restart`, {
+                          method: "POST",
+                        });
+                        if (res.ok) {
+                          // Force terminal recreation
+                          setTerminalKey(k => k + 1);
+                          updateSession(selectedNodeId!, { status: "running", isRestored: false });
+                        }
+                      } catch (e) {
+                        console.error("Failed to resume session:", e);
+                      }
+                    }}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Resume
+                  </button>
+                  <button
+                    onClick={handleNewSession}
+                    className="flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md bg-zinc-700 text-white text-sm font-medium hover:bg-zinc-600 transition-colors"
+                  >
+                    New Session
+                  </button>
+                </div>
               </div>
             </div>
           )}
