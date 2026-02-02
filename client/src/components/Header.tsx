@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Plus, Folder, Settings, Archive } from "lucide-react";
 import { motion } from "framer-motion";
 import { useStore } from "../stores/useStore";
@@ -7,6 +7,11 @@ import { SettingsModal } from "./SettingsModal";
 export function Header() {
   const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Count only non-archived sessions
+  const activeSessionCount = useMemo(() => {
+    return Array.from(sessions.values()).filter(s => !s.archived).length;
+  }, [sessions]);
 
   return (
     <header className="h-14 px-4 flex items-center justify-between border-b border-border bg-canvas-dark">
@@ -30,8 +35,8 @@ export function Header() {
       {/* Center - Session count */}
       <div className="absolute left-1/2 -translate-x-1/2">
         <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-surface text-xs text-zinc-400">
-          <div className={`w-1.5 h-1.5 rounded-full ${sessions.size > 0 ? 'bg-green-500' : 'bg-zinc-600'}`} />
-          <span>{sessions.size} agent{sessions.size !== 1 ? "s" : ""}</span>
+          <div className={`w-1.5 h-1.5 rounded-full ${activeSessionCount > 0 ? 'bg-green-500' : 'bg-zinc-600'}`} />
+          <span>{activeSessionCount} agent{activeSessionCount !== 1 ? "s" : ""}</span>
         </div>
       </div>
 
