@@ -485,6 +485,7 @@ export function autoResumeSessions() {
 
       session.pty = ptyProcess;
       session.status = "idle";
+      session.isRestored = false;
       session.autoResumed = true;
 
       // Set up PTY data handler
@@ -509,7 +510,10 @@ export function autoResumeSessions() {
       let finalCommand = injectPluginDir(session.command, session.agentId);
 
       // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
-      if (session.agentId === "claude" && session.claudeSessionId && !finalCommand.includes("--resume")) {
+      if (session.agentId === "claude" && session.claudeSessionId) {
+        // Remove any existing --resume flags first
+        finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
+
         const resumeArg = `--resume ${session.claudeSessionId}`;
         if (finalCommand.includes("llm agent claude")) {
           finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${resumeArg}`);
