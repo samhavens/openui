@@ -2,11 +2,16 @@
 
 import { $ } from "bun";
 import { existsSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
+import { fileURLToPath } from "url";
+import packageJson from "../package.json" assert { type: "json" };
 
-// Read version from package.json
-const packageJson = await Bun.file(join(import.meta.dir, "..", "package.json")).json();
+// Get the actual module directory (works with symlinks)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const ROOT_DIR = join(__dirname, "..");
+
 const CURRENT_VERSION = packageJson.version;
 
 const PORT = process.env.PORT || 6969;
@@ -113,11 +118,11 @@ await ensurePluginInstalled();
 checkForUpdates();
 
 // Build client if dist directory doesn't exist
-const clientDistPath = join(import.meta.dir, "..", "client", "dist");
+const clientDistPath = join(ROOT_DIR, "client", "dist");
 if (!existsSync(clientDistPath)) {
   console.log("\x1b[38;5;141m[build]\x1b[0m Building client for first run...");
   const buildProc = Bun.spawn(["bun", "run", "build"], {
-    cwd: join(import.meta.dir, ".."),
+    cwd: ROOT_DIR,
     stdio: ["inherit", "inherit", "inherit"]
   });
   await buildProc.exited;
@@ -131,7 +136,7 @@ if (!existsSync(clientDistPath)) {
 // Start the server with LAUNCH_CWD env var
 // In production mode, suppress server output
 const server = Bun.spawn(["bun", "run", "server/index.ts"], {
-  cwd: import.meta.dir + "/..",
+  cwd: ROOT_DIR,
   stdio: IS_DEV ? ["inherit", "inherit", "inherit"] : ["inherit", "ignore", "ignore"],
   env: { ...process.env, PORT: String(PORT), LAUNCH_CWD, OPENUI_QUIET: IS_DEV ? "" : "1" }
 });
