@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ReactFlow,
   Background,
@@ -7,22 +7,21 @@ import {
   BackgroundVariant,
   ReactFlowProvider,
   NodeChange,
-  applyNodeChanges,
+  useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Plus } from "lucide-react";
 
 import { useStore } from "./stores/useStore";
 import { AgentNode } from "./components/AgentNode/index";
-import { CategoryNode } from "./components/CategoryNode";
 import { Sidebar } from "./components/Sidebar";
 import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
+import { CanvasTabs } from "./components/CanvasTabs";
 
 const nodeTypes = {
   agent: AgentNode,
-  category: CategoryNode,
 };
 
 function AppContent() {
@@ -33,6 +32,8 @@ function AppContent() {
     setLaunchCwd,
     setSelectedNodeId,
     setSidebarOpen,
+    selectedNodeId,
+    sidebarOpen,
     addSession,
     updateSession,
     agents,
@@ -43,11 +44,22 @@ function AppContent() {
     newSessionForNodeId,
     setNewSessionForNodeId,
     sessions,
+    showArchived,
+    activeCanvasId,
+    setCanvases,
+    setActiveCanvasId,
   } = useStore();
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
+  const reactFlowInstance = useReactFlow();
   const positionUpdateTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasRestoredRef = useRef(false);
+
+  // Filter nodes to show only those belonging to the active canvas
+  const activeCanvasNodes = useMemo(() => {
+    if (!activeCanvasId) return nodes;
+    return nodes.filter(n => n.data?.canvasId === activeCanvasId);
+  }, [nodes, activeCanvasId]);
 
   // Sync nodes with store
   useEffect(() => {
@@ -72,6 +84,164 @@ function AppContent() {
       .then((agents) => setAgents(agents))
       .catch(console.error);
   }, [setAgents, setLaunchCwd]);
+
+  // Load canvases on mount (with migration if needed)
+  useEffect(() => {
+    fetch("/api/canvases")
+      .then(res => res.json())
+      .then(canvases => {
+        if (canvases.length === 0) {
+          // Trigger migration from categories to canvases
+          fetch("/api/migrate/canvases", { method: "POST" })
+            .then(() => fetch("/api/canvases"))
+            .then(res => res.json())
+            .then(migratedCanvases => {
+              setCanvases(migratedCanvases);
+              const savedActiveId = localStorage.getItem("openui-active-canvas");
+              // Validate that saved canvas ID exists, otherwise use first canvas
+              const validCanvasId = savedActiveId && migratedCanvases.find((c: any) => c.id === savedActiveId)
+                ? savedActiveId
+                : migratedCanvases[0]?.id;
+              setActiveCanvasId(validCanvasId);
+            });
+        } else {
+          setCanvases(canvases);
+          const savedActiveId = localStorage.getItem("openui-active-canvas");
+          // Validate that saved canvas ID exists, otherwise use first canvas
+          const validCanvasId = savedActiveId && canvases.find((c: any) => c.id === savedActiveId)
+            ? savedActiveId
+            : canvases[0]?.id;
+          setActiveCanvasId(validCanvasId);
+        }
+      })
+      .catch(console.error);
+  }, [setCanvases, setActiveCanvasId]);
+
+  // Keyboard shortcuts for switching between agents
+  useEffect(() => {
+    const getAgentNodeIds = () => {
+      return activeCanvasNodes
+        .filter((n) => n.type === "agent")
+        .sort((a: any, b: any) => {
+          // Sort top-to-bottom, left-to-right for consistent ordering
+          if (Math.abs(a.position.y - b.position.y) < 50) {
+            return a.position.x - b.position.x;
+          }
+          return a.position.y - b.position.y;
+        })
+        .map((n) => n.id);
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if typing in input/textarea
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      const isMod = e.metaKey || e.ctrlKey;
+      const agentNodeIds = getAgentNodeIds();
+
+      // Cmd/Ctrl + 1-9 for agents on current canvas
+      if (isMod && e.key >= "1" && e.key <= "9" && !e.shiftKey && !e.altKey) {
+        if (agentNodeIds.length > 0) {
+          e.preventDefault();
+          const index = parseInt(e.key) - 1;
+          if (index < agentNodeIds.length) {
+            setSelectedNodeId(agentNodeIds[index]);
+            setSidebarOpen(true);
+          }
+        }
+        return;
+      }
+
+      // Cmd/Ctrl + [ (prev) and ] (next) for agents
+      if (isMod && (e.key === "[" || e.key === "]") && agentNodeIds.length > 0) {
+        e.preventDefault();
+        const currentIndex = selectedNodeId
+          ? agentNodeIds.indexOf(selectedNodeId)
+          : -1;
+        const newIndex =
+          e.key === "["
+            ? currentIndex <= 0
+              ? agentNodeIds.length - 1
+              : currentIndex - 1
+            : currentIndex >= agentNodeIds.length - 1
+              ? 0
+              : currentIndex + 1;
+        setSelectedNodeId(agentNodeIds[newIndex]);
+        setSidebarOpen(true);
+        return;
+      }
+
+      // Escape to close sidebar
+      if (e.key === "Escape" && sidebarOpen) {
+        e.preventDefault();
+        setSidebarOpen(false);
+        setSelectedNodeId(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeCanvasNodes, selectedNodeId, sidebarOpen, setSelectedNodeId, setSidebarOpen]);
+
+  // Keyboard shortcuts for canvas switching
+  useEffect(() => {
+    const { canvases, addCanvas } = useStore.getState();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip if typing in input/textarea
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Cmd/Ctrl + Shift + 1-9: Switch to canvas by index
+      if (isMod && e.shiftKey && !e.altKey && e.key >= "1" && e.key <= "9") {
+        e.preventDefault();
+        const index = parseInt(e.key) - 1;
+        if (index < canvases.length) {
+          setActiveCanvasId(canvases[index].id);
+        }
+        return;
+      }
+
+      // Cmd/Ctrl + Shift + T: New canvas
+      if (isMod && e.shiftKey && e.key === "t") {
+        e.preventDefault();
+        const newCanvas = {
+          id: `canvas-${Date.now()}`,
+          name: `Canvas ${canvases.length + 1}`,
+          color: "#3B82F6",
+          order: canvases.length,
+          createdAt: new Date().toISOString(),
+        };
+
+        fetch("/api/canvases", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(newCanvas),
+        }).then(() => {
+          addCanvas(newCanvas);
+          setActiveCanvasId(newCanvas.id);
+        });
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [setActiveCanvasId]);
 
   // Poll for status updates every second to catch any missed WebSocket messages
   useEffect(() => {
@@ -102,32 +272,16 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [updateSession]);
 
-  // Restore sessions and categories after agents are loaded
+  // Restore sessions after agents are loaded
   useEffect(() => {
     if (agents.length === 0 || hasRestoredRef.current) return;
 
     Promise.all([
       fetch("/api/sessions").then((res) => res.json()),
       fetch("/api/state").then((res) => res.json()),
-      fetch("/api/categories").then((res) => res.json()),
     ])
-      .then(([sessions, { nodes: savedNodes }, categories]) => {
+      .then(([sessions, { nodes: savedNodes }]) => {
         const restoredNodes: any[] = [];
-
-        // Restore categories first (they should be behind agents)
-        categories.forEach((cat: any) => {
-          restoredNodes.push({
-            id: cat.id,
-            type: "category",
-            position: cat.position,
-            style: { width: cat.width, height: cat.height },
-            data: {
-              label: cat.label,
-              color: cat.color,
-            },
-            zIndex: -1, // Behind agent nodes
-          });
-        });
 
         // Restore agent sessions
         sessions.forEach((session: any, index: number) => {
@@ -170,6 +324,7 @@ function AppContent() {
               color: session.customColor || agent?.color || "#888",
               icon: agent?.icon || "cpu",
               sessionId: session.sessionId,
+              canvasId: saved?.canvasId || activeCanvasId,
             },
           });
         });
@@ -179,41 +334,105 @@ function AppContent() {
         setStoreNodes(restoredNodes);
       })
       .catch(console.error);
-  }, [agents, addSession, setNodes, setStoreNodes]);
+  }, [agents, addSession, setNodes, setStoreNodes, activeCanvasId]);
+
+  // Reload sessions when archive toggle changes
+  useEffect(() => {
+    if (!hasRestoredRef.current) return; // Skip on initial load
+
+    const archivedParam = showArchived ? "?archived=true" : "";
+    Promise.all([
+      fetch(`/api/sessions${archivedParam}`).then((res) => res.json()),
+      fetch(`/api/state${archivedParam}`).then((res) => res.json()),
+    ])
+      .then(([sessions, { nodes: savedNodes }]) => {
+        const updatedNodes: any[] = [];
+
+        // Update agent sessions
+        sessions.forEach((session: any, index: number) => {
+          const saved = savedNodes?.find((n: any) => n.sessionId === session.sessionId);
+          const agent = agents.find((a) => a.id === session.agentId);
+          const position = saved?.position?.x
+            ? saved.position
+            : {
+                x: 100 + (index % 5) * 220,
+                y: 100 + Math.floor(index / 5) * 150,
+              };
+
+          updatedNodes.push({
+            id: session.nodeId,
+            type: "agent",
+            position,
+            data: {
+              agentName: session.agentName,
+              customName: session.customName,
+              color: session.customColor || agent?.color || "#888",
+              status: session.status,
+              cwd: session.cwd,
+              originalCwd: session.originalCwd,
+              gitBranch: session.gitBranch,
+              isRestored: session.isRestored,
+              ticketId: session.ticketId,
+              ticketTitle: session.ticketTitle,
+              icon: agent?.icon || "cpu",
+              sessionId: session.sessionId,
+              canvasId: saved?.canvasId || activeCanvasId,
+            },
+          });
+
+          addSession(session.nodeId, {
+            id: session.nodeId,
+            sessionId: session.sessionId,
+            agentId: session.agentId,
+            agentName: session.agentName,
+            command: session.command,
+            color: session.customColor || agent?.color || "#888",
+            createdAt: session.createdAt,
+            cwd: session.cwd,
+            originalCwd: session.originalCwd,
+            gitBranch: session.gitBranch,
+            status: session.status,
+            customName: session.customName,
+            customColor: session.customColor,
+            notes: session.notes,
+            isRestored: session.isRestored,
+            ticketId: session.ticketId,
+            ticketTitle: session.ticketTitle,
+          });
+        });
+
+        setNodes(updatedNodes);
+        setStoreNodes(updatedNodes);
+
+        // Auto-center viewport after nodes are updated
+        setTimeout(() => {
+          if (updatedNodes.length > 0) {
+            reactFlowInstance.fitView({
+              padding: 0.2,      // 20% breathing room
+              duration: 300,     // Smooth 300ms transition
+              nodes: updatedNodes
+            });
+          }
+        }, 50); // Wait for ReactFlow to process new nodes
+      })
+      .catch(console.error);
+  }, [showArchived, agents, addSession, setNodes, setStoreNodes, activeCanvasId, reactFlowInstance]);
 
   // Helper to save all positions - accepts nodes directly to avoid sync issues
   const saveAllPositions = useCallback((nodesToSave?: typeof nodes) => {
     const currentNodes = nodesToSave || useStore.getState().nodes;
     if (currentNodes.length === 0) return;
 
-    const positions: Record<string, { x: number; y: number }> = {};
+    const positions: Record<string, { x: number; y: number; canvasId?: string }> = {};
     const GRID_SIZE = 24;
-    currentNodes.forEach((node) => {
-      // Only save agent positions to state/positions
+    currentNodes.forEach((node: any) => {
+      // Only save agent positions
       if (node.type === "agent") {
         positions[node.id] = {
           x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
           y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE,
+          canvasId: node.data?.canvasId,
         };
-      }
-      // Save category positions/sizes separately
-      if (node.type === "category") {
-        // Get dimensions - could be in style, measured, or width/height
-        const width = node.measured?.width || node.width || (typeof node.style?.width === 'number' ? node.style.width : parseInt(node.style?.width as string) || 250);
-        const height = node.measured?.height || node.height || (typeof node.style?.height === 'number' ? node.style.height : parseInt(node.style?.height as string) || 200);
-
-        fetch(`/api/categories/${node.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            position: {
-              x: Math.round(node.position.x / GRID_SIZE) * GRID_SIZE,
-              y: Math.round(node.position.y / GRID_SIZE) * GRID_SIZE,
-            },
-            width,
-            height,
-          }),
-        }).catch(console.error);
       }
     });
     if (Object.keys(positions).length > 0) {
@@ -234,29 +453,26 @@ function AppContent() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [saveAllPositions]);
 
-  // Save positions when nodes are moved or resized
+  // Save positions when nodes are moved
+
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    // Apply changes
     onNodesChange(changes);
 
+    // Debounced save for position changes only
     const positionChanges = changes.filter(
-      (c) => c.type === "position" && "dragging" in c && c.dragging === false
-    );
-    // Check for dimension changes - resizing property might be true, false, or undefined
-    const dimensionChanges = changes.filter(
-      (c) => c.type === "dimensions" && (!("resizing" in c) || c.resizing === false)
+      c => c.type === "position" && "dragging" in c && !c.dragging
     );
 
-    if (positionChanges.length > 0 || dimensionChanges.length > 0) {
+    if (positionChanges.length > 0) {
       if (positionUpdateTimeout.current) {
         clearTimeout(positionUpdateTimeout.current);
       }
-      // Compute updated nodes immediately to avoid sync delay issues
-      const updatedNodes = applyNodeChanges(changes, nodes);
       positionUpdateTimeout.current = setTimeout(() => {
-        saveAllPositions(updatedNodes);
+        saveAllPositions();
       }, 300);
     }
-  }, [onNodesChange, saveAllPositions, nodes]);
+  }, [onNodesChange, saveAllPositions]);
 
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: any) => {
@@ -279,10 +495,11 @@ function AppContent() {
   return (
     <div className="w-screen h-screen bg-canvas overflow-hidden flex flex-col">
       <Header />
+      <CanvasTabs />
 
       <div className="flex-1 relative">
         <ReactFlow
-          nodes={nodes}
+          nodes={activeCanvasNodes}
           edges={[]}
           onNodesChange={handleNodesChange}
           onNodeClick={onNodeClick}
