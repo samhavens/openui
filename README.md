@@ -241,9 +241,8 @@ Ralph includes rate limiting, circuit breakers, and intelligent exit detection t
 
 When starting sessions from GitHub issues, OpenUI can automatically create git worktrees for branch isolation:
 
-- Each issue gets its own worktree in `../<repo>-<branch-name>/`
+- Each issue gets its own worktree in `../<repo>-worktrees/<branch-name>/`
 - Agents work independently without affecting your main worktree
-- Automatically cleans up on session archive
 
 ## Troubleshooting
 
