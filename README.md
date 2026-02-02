@@ -1,8 +1,6 @@
 # OpenUI
 
-
 https://github.com/user-attachments/assets/0a1979ab-f093-447d-8fe7-bcf6830051ee
-
 
 **Your AI Agent Command Center**
 
@@ -21,11 +19,36 @@ You want to run 8 Claude agents simultaneously - each working on a different tic
 OpenUI gives you a visual command center where each agent is a node on a canvas:
 
 - **At-a-glance status**: See which agents are working, idle, or need input
-- **Ticket integration**: Start sessions from Linear tickets (more integrations coming)
+- **Ticket integration**: Start sessions from Linear tickets with automatic branch creation
 - **Branch isolation**: Each agent works in its own git worktree
-- **Organized workspace**: Categories, custom colors, drag-and-drop layout
+- **Organized workspace**: Categories, tabs, custom colors, drag-and-drop layout
+- **Auto-resume**: Sessions automatically restore on restart
+- **Archive management**: Archive completed sessions while keeping your workspace clean
 
 ## Installation
+
+### For Databricks (Internal Use)
+
+```bash
+# Clone the fork
+git clone https://github.com/JJ27/openui.git
+cd openui
+
+# Install dependencies
+bun install
+cd client && bun install && cd ..
+
+# Run in development mode
+bun run dev
+```
+
+Then forward port 6969 from your dev machine to access the UI locally.
+
+**Prerequisites:**
+- `bun` - Install with: `curl -fsSL https://bun.sh/install | bash`
+- `llm agent` - Claude Code agent interface (already available on Databricks dev machines)
+
+### Public Installation
 
 ```bash
 # Install globally
@@ -39,7 +62,7 @@ bunx @fallom/openui
 
 ## Quick Start
 
-1. Run `openui` in your project directory
+1. Run `openui` (or `bun run dev` for Databricks fork) in your project directory
 2. Browser opens at `http://localhost:6969`
 3. Click "+" to spawn agents (Claude Code, OpenCode, or Ralph Loop)
 4. Click any node to open its terminal
@@ -48,29 +71,44 @@ bunx @fallom/openui
 ## Features
 
 ### Canvas Management
-- Infinite canvas for organizing agents
-- Drag-and-drop positioning with snap-to-grid
-- Categories (folders) for grouping agents by team/project with persistent sizing
-- Custom names, colors, and icons per agent
-- Persistent layout across restarts
+- **Infinite canvas** for organizing agents with drag-and-drop positioning
+- **Tabs**: Create multiple canvases to organize agents by project, team, or workflow
+- **Categories (folders)**: Group related agents together with persistent sizing
+- **Custom styling**: Set custom names, colors, and icons per agent
+- **Persistent layout**: All positions and organization saved across restarts
+- **Auto-center**: Automatically centers canvas when switching views
 
 ### Agent Monitoring
-- Real-time status: Running, Idle, Needs Input, Tool Calling
-- Git branch display per agent
-- Directory/repo info
-- Redesigned node cards for better at-a-glance visibility
+- **Real-time status**: Running, Idle, Needs Input, Tool Calling, Disconnected
+- **Git integration**: Branch and repo info displayed on each node
+- **Directory tracking**: See working directory per agent
+- **Session count**: Active agent count displayed in header (excludes archived)
 
 ### Session Management
-- Spawn multiple agents at once (placed in horizontal row beside existing nodes)
-- Restart sessions with custom arguments
-- Session persistence and restore
-- Version check and empty state UI
+- **Auto-resume**: Sessions automatically restore on server restart with proper state
+- **Manual resume**: Resume disconnected sessions with preserved context
+- **Bulk spawn**: Create multiple agents at once (placed in horizontal row)
+- **Session persistence**: All sessions saved to `.openui/state.json`
+- **Archive**: Archive completed sessions to keep workspace clean while preserving history
+- **Custom restart**: Restart sessions with modified commands or arguments
 
-### Coming Soon: Linear Integration
+### Linear Integration
 - Start sessions directly from Linear tickets
 - Auto-create isolated branches per ticket
-- Git worktree support for parallel work
-- Ticket info displayed on agent nodes
+- Git worktree support for parallel work on different tickets
+- Ticket info (ID, title) displayed on agent nodes
+- Ticket URL linking
+
+### Claude Code Plugin (Auto-installed)
+
+OpenUI automatically installs a Claude Code plugin that provides:
+- **Precise status tracking**: Detect Working, Using Tools, Idle, Waiting for Input via hooks
+- **Session ID capture**: Enables proper session resume with `--resume <session_id>`
+- **Status updates**: WebSocket-based real-time status updates to OpenUI
+
+No manual installation required - just run `openui` and the plugin is set up automatically.
+
+See [claude-code-plugin/README.md](./claude-code-plugin/README.md) for more details.
 
 ## How It Works
 
@@ -93,9 +131,17 @@ bunx @fallom/openui
 
 OpenUI runs a local server that:
 - Spawns PTY sessions for each AI agent
-- Tracks agent state via terminal output parsing
+- Tracks agent state via Claude Code plugin hooks
 - Streams terminal I/O over WebSocket
 - Persists everything to `.openui/` in your project
+- Auto-resumes sessions on restart with proper state
+
+### Agent Commands
+
+By default, OpenUI uses `llm agent claude` to spawn Claude Code instances. This works seamlessly with:
+- Session resume via `--resume <session_id>`
+- Plugin injection via `--plugin-dir`
+- All standard Claude Code features
 
 ## Tech Stack
 
@@ -103,11 +149,12 @@ OpenUI runs a local server that:
 - **Backend**: Hono + WebSockets + bun-pty
 - **Frontend**: React + React Flow + xterm.js + Framer Motion
 - **State**: Zustand
+- **Terminal**: xterm.js with fit addon and web links
 
 ## Development
 
 ```bash
-git clone https://github.com/Fallomai/openui.git
+git clone https://github.com/JJ27/openui.git
 cd openui
 
 bun install
@@ -116,27 +163,40 @@ cd client && bun install && cd ..
 bun run dev  # Server on 4242, UI on 6969
 ```
 
+### Project Structure
+
+```
+openui/
+├── server/           # Backend (Hono + WebSocket + PTY management)
+│   ├── routes/       # API routes
+│   ├── services/     # Session, persistence, auto-resume logic
+│   └── types/        # TypeScript types
+├── client/           # Frontend (React + React Flow)
+│   └── src/
+│       ├── components/  # React components
+│       ├── stores/      # Zustand state management
+│       └── App.tsx
+├── claude-code-plugin/  # Claude Code plugin for status tracking
+└── .openui/          # Runtime data (created in working directory)
+    ├── state.json    # Persisted sessions and canvas state
+    └── claude-code-plugin/  # Auto-installed plugin
+```
+
 ### Testing with the Claude Code Plugin
 
 For development, OpenUI automatically loads the plugin from the repo's `claude-code-plugin/` directory if present. Just run `bun run dev` and the plugin will be injected when spawning Claude agents.
 
 You can also test manually:
 ```bash
-claude --plugin-dir $(pwd)/claude-code-plugin
+llm agent claude --plugin-dir $(pwd)/claude-code-plugin
 ```
 
 ## Requirements
 
-- Bun 1.0+
-- One of: Claude Code, OpenCode, or Ralph Loop
-
-### Claude Code Plugin (Auto-installed)
-
-OpenUI automatically pulls and installs the Claude Code plugin when you run it for the first time. This enables precise status detection (Working, Using Tools, Idle, Waiting for Input) via Claude Code hooks instead of terminal output parsing.
-
-No manual installation required - just run `openui` and the plugin is set up automatically.
-
-See [claude-code-plugin/README.md](./claude-code-plugin/README.md) for more details.
+- **Bun 1.0+**: JavaScript runtime and package manager
+- **Claude Code**: Available via `llm agent claude` (Databricks) or `claude` (public)
+  - For Databricks: Already installed on dev machines
+  - For public: Install from [claude.com/claude-code](https://claude.com/claude-code)
 
 ### Optional: Ralph Loop
 
@@ -156,6 +216,46 @@ ralph-setup .
 ```
 
 Ralph includes rate limiting, circuit breakers, and intelligent exit detection to prevent runaway loops.
+
+## Configuration
+
+### Linear Integration
+
+To enable Linear ticket integration:
+
+1. Get a Linear API key from [linear.app/settings/api](https://linear.app/settings/api)
+2. Create `~/.openui/linear-config.json`:
+
+```json
+{
+  "apiKey": "your_linear_api_key_here",
+  "teamId": "your_team_id",
+  "defaultBaseBranch": "main",
+  "ticketPromptTemplate": "Work on ticket {{ticketId}}: {{ticketTitle}}\n\n{{ticketDescription}}"
+}
+```
+
+### Git Worktrees
+
+When starting sessions from Linear tickets, OpenUI can automatically create git worktrees for branch isolation:
+
+- Each ticket gets its own worktree in `../<repo>-<branch-name>/`
+- Agents work independently without affecting your main worktree
+- Automatically cleans up on session archive
+
+## Troubleshooting
+
+### Sessions show "disconnected"
+- Check that `llm agent claude` works in your terminal
+- Ensure the Claude Code plugin is installed (should be automatic)
+- Click the "Resume" button to restart the session
+
+### Port already in use
+- Change the port in `server/index.ts` or kill the process using port 6969
+
+### Plugin not working
+- Delete `~/.openui/claude-code-plugin/` and restart OpenUI to reinstall
+- Check plugin logs in the terminal output
 
 ## License
 
