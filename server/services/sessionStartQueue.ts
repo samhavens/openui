@@ -27,6 +27,26 @@ let currentPending: PendingStart | null = null;
 const queue: QueueEntry[] = [];
 let processing = false;
 
+// Progress tracking for UI
+let totalEnqueued = 0;
+let completedCount = 0;
+let currentSessionId: string | null = null;
+
+export function getQueueProgress() {
+  return {
+    total: totalEnqueued,
+    completed: completedCount,
+    current: currentSessionId,
+    isActive: processing,
+  };
+}
+
+export function resetQueueProgress() {
+  totalEnqueued = 0;
+  completedCount = 0;
+  currentSessionId = null;
+}
+
 /**
  * Enqueue a Claude agent start. The startFn will be called when it's
  * this session's turn. The queue advances when signalSessionReady()
@@ -34,6 +54,7 @@ let processing = false;
  */
 export function enqueueSessionStart(sessionId: string, startFn: () => void): void {
   queue.push({ sessionId, startFn });
+  totalEnqueued++;
   if (!processing) {
     processQueue();
   }
@@ -66,6 +87,7 @@ async function processQueue(): Promise<void> {
 
   while (queue.length > 0) {
     const next = queue.shift()!;
+    currentSessionId = next.sessionId;
     log(`\x1b[38;5;141m[start-queue]\x1b[0m Starting ${next.sessionId} (${queue.length} remaining in queue)`);
 
     await new Promise<void>((resolve) => {
@@ -94,7 +116,10 @@ async function processQueue(): Promise<void> {
         resolve();
       }
     });
+
+    completedCount++;
   }
 
   processing = false;
+  currentSessionId = null;
 }

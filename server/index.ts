@@ -23,6 +23,13 @@ app.route("/api", apiRoutes);
 // Serve static files
 app.use("/*", serveStatic({ root: "./client/dist" }));
 
+// Restore sessions BEFORE starting server so API requests find populated sessions Map
+const migrationResult = migrateStateToHome();
+if (migrationResult.migrated) {
+  log(`\x1b[38;5;82m[migration]\x1b[0m Migrated state from ${migrationResult.source}`);
+}
+restoreSessions();
+
 // WebSocket server
 Bun.serve<WebSocketData>({
   port: PORT,
@@ -106,15 +113,6 @@ Bun.serve<WebSocketData>({
     },
   },
 });
-
-// Migrate state from old location if needed
-const migrationResult = migrateStateToHome();
-if (migrationResult.migrated) {
-  log(`\x1b[38;5;82m[migration]\x1b[0m Migrated state from ${migrationResult.source}`);
-}
-
-// Restore sessions on startup
-restoreSessions();
 
 // Auto-resume non-archived sessions after a short delay
 setTimeout(() => {

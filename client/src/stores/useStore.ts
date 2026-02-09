@@ -98,6 +98,10 @@ interface AppState {
   archiveSession: (nodeId: string) => Promise<void>;
   unarchiveSession: (nodeId: string) => Promise<void>;
   loadState: () => Promise<void>;
+
+  // Auto-resume progress
+  autoResumeProgress: { total: number; completed: number; current: string | null; isActive: boolean } | null;
+  setAutoResumeProgress: (progress: { total: number; completed: number; current: string | null; isActive: boolean } | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -263,6 +267,10 @@ export const useStore = create<AppState>((set) => ({
     // (Server needs to reload sessions from state.json)
     window.location.reload();
   },
+
+  // Auto-resume progress
+  autoResumeProgress: null,
+  setAutoResumeProgress: (progress) => set({ autoResumeProgress: progress }),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;

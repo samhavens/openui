@@ -273,6 +273,40 @@ function AppContent() {
     return () => clearInterval(interval);
   }, [updateSession]);
 
+  // Poll auto-resume progress during startup
+  useEffect(() => {
+    const { setAutoResumeProgress } = useStore.getState();
+    let stopped = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/auto-resume/progress");
+        if (res.ok) {
+          const progress = await res.json();
+          setAutoResumeProgress(progress);
+          // Stop polling once queue is inactive and we've seen at least one update
+          if (!progress.isActive && progress.total > 0) {
+            // Keep showing for 2s after completion then clear
+            setTimeout(() => {
+              if (!stopped) setAutoResumeProgress(null);
+            }, 2000);
+            return; // Don't schedule another poll
+          }
+          if (!progress.isActive && progress.total === 0) {
+            setAutoResumeProgress(null);
+            return; // No auto-resume happening
+          }
+        }
+      } catch {
+        // Ignore errors
+      }
+      if (!stopped) setTimeout(poll, 1500);
+    };
+
+    poll();
+    return () => { stopped = true; };
+  }, []);
+
   // Restore sessions after agents are loaded
   useEffect(() => {
     if (agents.length === 0 || hasRestoredRef.current) return;

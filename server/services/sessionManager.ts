@@ -214,7 +214,21 @@ export function createWorktree(params: {
 }
 
 
-const MAX_BUFFER_SIZE = 1000;
+export const MAX_BUFFER_SIZE = 1000;
+
+/** Broadcast a message to all WebSocket clients of a session, with try-catch per client */
+export function broadcastToSession(session: Session, message: object) {
+  const json = JSON.stringify(message);
+  for (const client of session.clients) {
+    try {
+      if (client.readyState === 1) {
+        client.send(json);
+      }
+    } catch {
+      session.clients.delete(client);
+    }
+  }
+}
 
 export const sessions = new Map<string, Session>();
 
@@ -352,11 +366,7 @@ export function createSession(params: {
     session.recentOutputSize += data.length;
 
     // Just broadcast output - status comes from plugin hooks
-    for (const client of session.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({ type: "output", data }));
-      }
-    }
+    broadcastToSession(session, { type: "output", data });
   });
 
   // Run the command (inject plugin-dir for Claude if available)
@@ -383,12 +393,9 @@ export function createSession(params: {
     }, 300);
   };
 
-  // Claude agents go through the queue to prevent OAuth port contention
-  if (agentId === "claude") {
-    enqueueSessionStart(sessionId, writeCommand);
-  } else {
-    writeCommand();
-  }
+  // Start immediately -- the OAuth port contention queue is only used for
+  // mass auto-resume at startup, not for individual user-created sessions
+  writeCommand();
 
   log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}`);
   return { session, cwd: workingDir, gitBranch: gitBranch || undefined };
@@ -510,7 +517,7 @@ export function autoResumeSessions() {
         // Set up PTY data handler
         ptyProcess.onData((data: string) => {
           session.outputBuffer.push(data);
-          if (session.outputBuffer.length > 2000) {
+          if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
             session.outputBuffer.shift();
           }
 
@@ -518,18 +525,15 @@ export function autoResumeSessions() {
           session.recentOutputSize += data.length;
 
           // Broadcast to all connected clients
-          for (const client of session.clients) {
-            if (client.readyState === 1) {
-              client.send(JSON.stringify({ type: "output", data }));
-            }
-          }
+          broadcastToSession(session, { type: "output", data });
         });
 
         // Build the command with resume flag if we have a Claude session ID
         let finalCommand = injectPluginDir(session.command, session.agentId);
 
         // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
-        if (session.agentId === "claude" && session.claudeSessionId) {
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
           // Remove any existing --resume flags first
           finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
 

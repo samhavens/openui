@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, copyFileSync, renameSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type { PersistedState, Session } from "../types";
@@ -17,6 +17,13 @@ const OLD_DATA_DIR = join(LAUNCH_CWD, ".openui");
 function ensureDirs() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
   if (!existsSync(BUFFERS_DIR)) mkdirSync(BUFFERS_DIR, { recursive: true });
+}
+
+// Atomic JSON write: write to .tmp then rename (rename is atomic on same-filesystem on Linux)
+export function atomicWriteJson(filePath: string, data: any): void {
+  const tmpPath = filePath + ".tmp";
+  writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+  renameSync(tmpPath, filePath);
 }
 
 // Migrate existing data from LAUNCH_CWD to home directory
@@ -65,9 +72,11 @@ export function migrateStateToHome(): { migrated: boolean; source?: string } {
   try {
     ensureDirs();
 
-    // Copy state.json
+    // Copy state.json (atomic write to prevent corruption)
     const oldState = readFileSync(oldStateFile, "utf-8");
-    writeFileSync(STATE_FILE, oldState);
+    const tmpPath = STATE_FILE + ".tmp";
+    writeFileSync(tmpPath, oldState);
+    renameSync(tmpPath, STATE_FILE);
 
     // Copy buffers directory
     if (existsSync(oldBuffersDir)) {
@@ -164,7 +173,7 @@ export function migrateCategoriesToCanvases(): { migrated: boolean; canvasCount:
   state.canvases = canvases;
 
   try {
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    atomicWriteJson(STATE_FILE, state);
     console.log(`[migration] Migrated ${state.categories?.length || 0} categories to ${canvases.length} canvases`);
   } catch (e) {
     console.error("[migration] Failed to migrate canvases:", e);
@@ -183,7 +192,7 @@ export function saveCanvases(canvases: Canvas[]) {
   const state = loadState();
   state.canvases = canvases;
   try {
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    atomicWriteJson(STATE_FILE, state);
   } catch (e) {
     console.error("Failed to save canvases:", e);
   }
@@ -211,7 +220,7 @@ export function loadState(): PersistedState {
         if (fixedCount > 0) {
           console.log(`\x1b[38;5;245m[persistence]\x1b[0m Fixed ${fixedCount} orphaned canvas IDs`);
           // Save the fixed state
-          writeFileSync(STATE_FILE, JSON.stringify(data, null, 2));
+          atomicWriteJson(STATE_FILE, data);
         }
       }
 
@@ -220,6 +229,18 @@ export function loadState(): PersistedState {
     }
   } catch (e) {
     console.error("Failed to load state:", e);
+    // Recovery: if state.json is corrupted, try the .tmp file (from last atomic write)
+    const tmpPath = STATE_FILE + ".tmp";
+    try {
+      if (existsSync(tmpPath)) {
+        const data = JSON.parse(readFileSync(tmpPath, "utf-8"));
+        console.log(`\x1b[38;5;208m[persistence]\x1b[0m Recovered state from ${tmpPath}`);
+        renameSync(tmpPath, STATE_FILE);
+        return data;
+      }
+    } catch (e2) {
+      console.error("Failed to recover from .tmp:", e2);
+    }
   }
   return { nodes: [] };
 }
@@ -273,19 +294,22 @@ export function saveState(sessions: Map<string, Session>) {
     saveBuffer(sessionId, session.outputBuffer);
   }
 
-  // Preserve sessions from state.json that aren't in sessions Map
-  // (includes archived sessions and recently unarchived sessions awaiting reload)
+  // Preserve only archived sessions from state.json that aren't in the sessions Map.
+  // Previously this preserved ALL non-Map nodes, which caused deleted sessions to
+  // reappear as zombies (delete removes from Map, but saveState re-added from disk).
   if (savedState.nodes) {
     const activeSessionIds = new Set(sessions.keys());
     const preservedNodes = savedState.nodes.filter(
-      n => !activeSessionIds.has(n.sessionId)
+      n => !activeSessionIds.has(n.sessionId) && n.archived === true
     );
-    console.log(`[saveState] Preserving ${preservedNodes.length} nodes not in sessions Map`);
+    if (preservedNodes.length > 0) {
+      console.log(`[saveState] Preserving ${preservedNodes.length} archived nodes`);
+    }
     state.nodes.push(...preservedNodes);
   }
 
   try {
-    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    atomicWriteJson(STATE_FILE, state);
   } catch (e) {
     console.error("Failed to save state:", e);
   }
@@ -309,7 +333,7 @@ export function savePositions(positions: Record<string, { x: number; y: number; 
 
   if (updated > 0) {
     try {
-      writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+      atomicWriteJson(STATE_FILE, state);
       console.log(`\x1b[38;5;245m[persistence]\x1b[0m Saved ${updated} positions to ${STATE_FILE}`);
     } catch (e) {
       console.error("Failed to save positions:", e);

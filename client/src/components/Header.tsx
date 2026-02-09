@@ -1,11 +1,11 @@
 import { useState, useMemo } from "react";
-import { Plus, Folder, Settings, Archive } from "lucide-react";
-import { motion } from "framer-motion";
+import { Plus, Folder, Settings, Archive, Loader2 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useStore } from "../stores/useStore";
 import { SettingsModal } from "./SettingsModal";
 
 export function Header() {
-  const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived } = useStore();
+  const { setAddAgentModalOpen, sessions, launchCwd, showArchived, setShowArchived, autoResumeProgress } = useStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Count active (non-archived) sessions by status
@@ -25,6 +25,11 @@ export function Header() {
     };
   }, [sessions]);
 
+  const showProgress = autoResumeProgress?.isActive && autoResumeProgress.total > 0;
+  const progressPct = autoResumeProgress
+    ? Math.round((autoResumeProgress.completed / Math.max(autoResumeProgress.total, 1)) * 100)
+    : 0;
+
   return (
     <header className="h-14 px-4 flex items-center justify-between border-b border-border bg-canvas-dark">
       {/* Logo */}
@@ -35,34 +40,65 @@ export function Header() {
           </div>
           <span className="text-sm font-semibold text-white">OpenUI</span>
         </div>
-        
+
         <div className="h-4 w-px bg-border mx-2" />
-        
+
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Folder className="w-3 h-3" />
           <span className="font-mono truncate max-w-[200px]">{launchCwd || "~"}</span>
         </div>
       </div>
 
-      {/* Center - Status counts */}
+      {/* Center - Status counts or auto-resume progress */}
       <div className="absolute left-1/2 -translate-x-1/2">
-        <div className="flex items-center gap-3 px-3 py-1 rounded-full bg-surface text-xs">
-          {/* Working agents */}
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            <span className="text-zinc-400">{statusCounts.working}</span>
-          </div>
-          {/* Needs input agents */}
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
-            <span className="text-zinc-400">{statusCounts.needsInput}</span>
-          </div>
-          {/* Idle agents */}
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-            <span className="text-zinc-400">{statusCounts.idle}</span>
-          </div>
-        </div>
+        <AnimatePresence mode="wait">
+          {showProgress ? (
+            <motion.div
+              key="progress"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="flex items-center gap-2 px-3 py-1 rounded-full bg-surface text-xs"
+            >
+              <Loader2 className="w-3 h-3 text-violet-400 animate-spin" />
+              <span className="text-zinc-400">
+                Restoring agents... {autoResumeProgress!.completed}/{autoResumeProgress!.total}
+              </span>
+              <div className="w-20 h-1.5 rounded-full bg-zinc-700 overflow-hidden">
+                <motion.div
+                  className="h-full rounded-full bg-violet-500"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${progressPct}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="status"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="flex items-center gap-3 px-3 py-1 rounded-full bg-surface text-xs"
+            >
+              {/* Working agents */}
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                <span className="text-zinc-400">{statusCounts.working}</span>
+              </div>
+              {/* Needs input agents */}
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-orange-400" />
+                <span className="text-zinc-400">{statusCounts.needsInput}</span>
+              </div>
+              {/* Idle agents */}
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+                <span className="text-zinc-400">{statusCounts.idle}</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Right side buttons */}

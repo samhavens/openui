@@ -17,6 +17,7 @@ import {
   ArrowUp,
   Github,
   Brain,
+  History,
 } from "lucide-react";
 import { useReactFlow } from "@xyflow/react";
 import { useStore, Agent, AgentSession } from "../stores/useStore";
@@ -46,7 +47,21 @@ interface NewSessionModalProps {
   existingNodeId?: string;
 }
 
-type TabType = "blank" | "github";
+interface ClaudeConversation {
+  sessionId: string;
+  slug: string;
+  summary: string;
+  firstPrompt: string;
+  messageCount: number;
+  created: string;
+  modified: string;
+  gitBranch: string;
+  projectPath: string;
+  matchSnippet?: string;
+  fileExists: boolean;
+}
+
+type TabType = "blank" | "github" | "resume";
 
 // Node dimensions for collision detection
 const NODE_WIDTH = 200;
@@ -175,6 +190,15 @@ export function NewSessionModal({
   const [githubError, setGithubError] = useState<string | null>(null);
   const [selectedGithubIssue, setSelectedGithubIssue] = useState<GitHubIssue | null>(null);
 
+  // Resume/conversation search state
+  const [resumeQuery, setResumeQuery] = useState("");
+  const [resumeConversations, setResumeConversations] = useState<ClaudeConversation[]>([]);
+  const [resumeLoading, setResumeLoading] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<ClaudeConversation | null>(null);
+  const [resumeProjects, setResumeProjects] = useState<{ dirName: string; originalPath: string }[]>([]);
+  const [selectedProject, setSelectedProject] = useState("");
+
   // Track if we've initialized for this modal open
   const [initialized, setInitialized] = useState(false);
 
@@ -201,6 +225,11 @@ export function NewSessionModal({
       setSelectedGithubIssue(null);
       setGithubIssues([]);
       setGithubError(null);
+      // Reset resume state
+      setSelectedConversation(null);
+      setResumeConversations([]);
+      setResumeError(null);
+      setResumeQuery("");
       setInitialized(true);
     } else if (!open) {
       // Reset flags when modal closes
@@ -277,6 +306,43 @@ export function NewSessionModal({
     loadGithubIssues(githubRepoUrl);
   };
 
+  // Resume conversation search functions
+  const loadResumeProjects = async () => {
+    try {
+      const res = await fetch("/api/claude/projects");
+      if (res.ok) {
+        const data = await res.json();
+        setResumeProjects(data);
+      }
+    } catch {
+      // Silently fail, projects filter is optional
+    }
+  };
+
+  const searchResumeConversations = async (query: string, project?: string) => {
+    setResumeLoading(true);
+    setResumeError(null);
+    try {
+      const params = new URLSearchParams();
+      if (query.trim()) params.set("q", query.trim());
+      const proj = project ?? selectedProject;
+      if (proj) params.set("projectPath", proj);
+      params.set("limit", "30");
+
+      const res = await fetch(`/api/claude/conversations?${params}`);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to search conversations");
+      }
+      const data = await res.json();
+      setResumeConversations(data.conversations || []);
+    } catch (e: any) {
+      setResumeError(e.message);
+    } finally {
+      setResumeLoading(false);
+    }
+  };
+
   const handleClose = () => {
     onClose();
   };
@@ -288,9 +354,16 @@ export function NewSessionModal({
 
     try {
       const workingDir = cwd || (isReplacing ? existingSession?.cwd : null) || launchCwd;
+
+      // If resuming a conversation, inject --resume flag
+      let effectiveCommandArgs = commandArgs;
+      if (activeTab === "resume" && selectedConversation) {
+        effectiveCommandArgs = `--resume ${selectedConversation.sessionId}`;
+      }
+
       const fullCommand = selectedAgent.command
-        ? (commandArgs ? `${selectedAgent.command} ${commandArgs}` : selectedAgent.command)
-        : commandArgs;
+        ? (effectiveCommandArgs ? `${selectedAgent.command} ${effectiveCommandArgs}` : selectedAgent.command)
+        : effectiveCommandArgs;
 
       // If replacing existing session, delete it first
       if (isReplacing && existingSession && existingNodeId) {
@@ -483,6 +556,23 @@ export function NewSessionModal({
                     <Github className="w-3.5 h-3.5" />
                     GitHub
                   </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab("resume");
+                      setSelectedGithubIssue(null);
+                      // Load projects and recent conversations on first open
+                      if (resumeProjects.length === 0) loadResumeProjects();
+                      if (resumeConversations.length === 0) searchResumeConversations("");
+                    }}
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1.5 ${
+                      activeTab === "resume"
+                        ? "bg-zinc-700 text-white"
+                        : "text-zinc-400 hover:text-white hover:bg-surface-active"
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    Resume
+                  </button>
                 </div>
 
                 {/* Content */}
@@ -651,6 +741,170 @@ export function NewSessionModal({
                             <span className="text-sm text-zinc-300">Create git worktree</span>
                           </label>
                         </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Resume conversation search */}
+                  {activeTab === "resume" && (
+                    <div className="space-y-3">
+                      {!selectedConversation ? (
+                        <>
+                          {/* Search input */}
+                          <div className="space-y-2">
+                            <label className="text-xs text-zinc-500">Search Conversations</label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={resumeQuery}
+                                onChange={(e) => setResumeQuery(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") searchResumeConversations(resumeQuery);
+                                }}
+                                placeholder="Search by content, summary, or prompt..."
+                                className="flex-1 px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                              />
+                              <button
+                                onClick={() => searchResumeConversations(resumeQuery)}
+                                disabled={resumeLoading}
+                                className="px-3 py-2 rounded-md bg-zinc-700 text-white text-sm font-medium hover:bg-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                {resumeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Search"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Project filter */}
+                          {resumeProjects.length > 1 && (
+                            <select
+                              value={selectedProject}
+                              onChange={(e) => {
+                                setSelectedProject(e.target.value);
+                                searchResumeConversations(resumeQuery, e.target.value);
+                              }}
+                              className="w-full px-3 py-2 rounded-md bg-canvas border border-border text-white text-sm focus:outline-none focus:border-zinc-500"
+                            >
+                              <option value="">All projects</option>
+                              {resumeProjects.map((p) => (
+                                <option key={p.dirName} value={p.originalPath}>
+                                  {p.originalPath}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {/* Conversation list */}
+                          <div className="max-h-56 overflow-y-auto rounded-md border border-border">
+                            {resumeLoading ? (
+                              <div className="p-6 text-center">
+                                <Loader2 className="w-5 h-5 text-zinc-500 animate-spin mx-auto" />
+                              </div>
+                            ) : resumeError ? (
+                              <div className="p-4 text-center">
+                                <AlertCircle className="w-5 h-5 text-red-500 mx-auto mb-1" />
+                                <p className="text-xs text-red-400">{resumeError}</p>
+                              </div>
+                            ) : resumeConversations.length === 0 ? (
+                              <div className="p-6 text-center text-zinc-500 text-sm">
+                                {resumeQuery ? "No conversations found" : "No Claude conversations found"}
+                              </div>
+                            ) : (
+                              resumeConversations.map((conv) => (
+                                <button
+                                  key={conv.sessionId}
+                                  onClick={() => {
+                                    setSelectedConversation(conv);
+                                    // Auto-select Claude agent
+                                    const claudeAgent = agents.find((a) => a.id === "claude");
+                                    if (claudeAgent) setSelectedAgent(claudeAgent);
+                                    // Auto-set working directory
+                                    if (conv.projectPath) setCwd(conv.projectPath);
+                                  }}
+                                  className="w-full p-3 hover:bg-canvas text-left transition-colors border-b border-border last:border-b-0"
+                                >
+                                  <div className="flex items-center gap-2 mb-0.5">
+                                    <span className="text-[10px] font-mono text-zinc-400 truncate max-w-[200px]">
+                                      {conv.projectPath.split("/").pop()}
+                                    </span>
+                                    {conv.gitBranch && (
+                                      <span className="text-[10px] font-mono text-zinc-500 flex items-center gap-0.5">
+                                        <GitBranch className="w-2.5 h-2.5" />
+                                        {conv.gitBranch}
+                                      </span>
+                                    )}
+                                    <span className="text-[10px] text-zinc-600 ml-auto flex-shrink-0">
+                                      {conv.messageCount} msgs &middot; {new Date(conv.modified).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-white truncate">
+                                    {conv.slug && <span className="text-zinc-400 mr-1">{conv.slug}</span>}
+                                    {conv.summary || conv.firstPrompt}
+                                  </p>
+                                  {!conv.fileExists && (
+                                    <p className="text-[10px] text-amber-500 mt-0.5">Session file not found - resume may fail</p>
+                                  )}
+                                  {conv.fileExists && conv.modified && (Date.now() - new Date(conv.modified).getTime() > 30 * 24 * 60 * 60 * 1000) && (
+                                    <p className="text-[10px] text-amber-600 mt-0.5">Session older than 30 days - may have expired</p>
+                                  )}
+                                  {conv.matchSnippet && (
+                                    <p
+                                      className="text-[10px] text-zinc-500 truncate mt-0.5"
+                                      dangerouslySetInnerHTML={{
+                                        __html: conv.matchSnippet
+                                          .replace(/>>>/g, '<span class="text-amber-400 font-medium">')
+                                          .replace(/<<</g, "</span>"),
+                                      }}
+                                    />
+                                  )}
+                                  {!conv.matchSnippet && conv.firstPrompt && conv.summary && (
+                                    <p className="text-[10px] text-zinc-500 truncate mt-0.5">{conv.firstPrompt}</p>
+                                  )}
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="p-3 rounded-lg bg-zinc-700/30 border border-zinc-600/30">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-mono text-zinc-400 truncate">
+                              {selectedConversation.projectPath.split("/").pop()}
+                            </span>
+                            <button
+                              onClick={() => setSelectedConversation(null)}
+                              className="text-[10px] text-zinc-500 hover:text-white"
+                            >
+                              Change
+                            </button>
+                          </div>
+                          <p className="text-sm text-white">
+                            {selectedConversation.slug && <span className="text-zinc-400 mr-1.5">{selectedConversation.slug}</span>}
+                            {selectedConversation.summary || selectedConversation.firstPrompt}
+                          </p>
+                          {!selectedConversation.fileExists && (
+                            <p className="text-[10px] text-amber-500 mt-1">Session file not found - resume may fail</p>
+                          )}
+                          <div className="flex items-center gap-3 mt-1.5 text-[10px] text-zinc-500">
+                            {selectedConversation.gitBranch && (
+                              <span className="flex items-center gap-0.5">
+                                <GitBranch className="w-2.5 h-2.5" />
+                                {selectedConversation.gitBranch}
+                              </span>
+                            )}
+                            <span>{selectedConversation.messageCount} messages</span>
+                            <span>{new Date(selectedConversation.modified).toLocaleDateString()}</span>
+                          </div>
+                          {selectedConversation.matchSnippet && (
+                            <p
+                              className="text-[10px] text-zinc-400 mt-2 line-clamp-2"
+                              dangerouslySetInnerHTML={{
+                                __html: selectedConversation.matchSnippet
+                                  .replace(/>>>/g, '<span class="text-amber-400 font-medium">')
+                                  .replace(/<<</g, "</span>"),
+                              }}
+                            />
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
@@ -839,11 +1093,13 @@ export function NewSessionModal({
                   </button>
                   <button
                     onClick={handleCreate}
-                    disabled={!selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs) || (activeTab === "github" && !selectedGithubIssue)}
+                    disabled={!selectedAgent || isCreating || (!selectedAgent?.command && !commandArgs && activeTab !== "resume") || (activeTab === "github" && !selectedGithubIssue) || (activeTab === "resume" && !selectedConversation)}
                     className="px-4 py-1.5 rounded-md text-sm font-medium text-canvas bg-white hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {isCreating
                       ? "Creating..."
+                      : activeTab === "resume"
+                      ? "Resume"
                       : isReplacing
                       ? "Start Session"
                       : count > 1

@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir } from "../services/sessionManager";
-import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases } from "../services/persistence";
-import { enqueueSessionStart, signalSessionReady } from "../services/sessionStartQueue";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE } from "../services/sessionManager";
+import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson } from "../services/persistence";
+import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
+import { join } from "path";
+import { homedir } from "os";
 
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
 const QUIET = !!process.env.OPENUI_QUIET;
@@ -31,6 +33,11 @@ apiRoutes.get("/auto-resume/config", (c) => {
       canvasId: s.canvasId,
     })),
   });
+});
+
+// Get auto-resume queue progress
+apiRoutes.get("/auto-resume/progress", (c) => {
+  return c.json(getQueueProgress());
 });
 
 // Browse directories for file picker
@@ -298,25 +305,22 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
     ptyProcess.onData((data: string) => {
       session.outputBuffer.push(data);
-      if (session.outputBuffer.length > 1000) {
+      if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
         session.outputBuffer.shift();
       }
 
       session.lastOutputTime = Date.now();
       session.recentOutputSize += data.length;
 
-      for (const client of session.clients) {
-        if (client.readyState === 1) {
-          client.send(JSON.stringify({ type: "output", data }));
-        }
-      }
+      broadcastToSession(session, { type: "output", data });
     });
 
     // Build the command with resume flag if we have a Claude session ID
     let finalCommand = injectPluginDir(session.command, session.agentId);
 
     // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
-    if (session.agentId === "claude" && session.claudeSessionId) {
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
       // Remove any existing --resume flags first
       finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
 
@@ -336,12 +340,8 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     log(`\x1b[38;5;141m[session]\x1b[0m Restarted ${sessionId}`);
   };
 
-  // Claude agents go through the queue to prevent OAuth port contention
-  if (session.agentId === "claude") {
-    enqueueSessionStart(sessionId, startFn);
-  } else {
-    startFn();
-  }
+  // Start immediately -- the queue is only for mass auto-resume at startup
+  startFn();
 
   return c.json({ success: true });
 });
@@ -362,12 +362,21 @@ apiRoutes.patch("/sessions/:sessionId", async (c) => {
 
 apiRoutes.delete("/sessions/:sessionId", (c) => {
   const sessionId = c.req.param("sessionId");
-  const success = deleteSession(sessionId);
 
-  if (success) {
-    saveState(sessions);
+  // Remove from sessions Map if present (kills PTY)
+  deleteSession(sessionId);
+
+  // Also remove directly from state.json (handles archived/disk-only sessions)
+  const state = loadState();
+  const before = state.nodes.length;
+  state.nodes = state.nodes.filter(n => n.sessionId !== sessionId);
+
+  if (state.nodes.length < before) {
+    const stateFile = join(homedir(), ".openui", "state.json");
+    atomicWriteJson(stateFile, state);
     return c.json({ success: true });
   }
+
   return c.json({ error: "Session not found" }, 404);
 });
 
@@ -397,12 +406,9 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
     // Update archived status
     node.archived = archived;
 
-    // Write state back (this will be preserved by saveState)
-    const { writeFileSync } = require("fs");
-    const { join } = require("path");
-    const { homedir } = require("os");
+    // Write state back atomically
     const stateFile = join(homedir(), ".openui", "state.json");
-    writeFileSync(stateFile, JSON.stringify(state, null, 2));
+    atomicWriteJson(stateFile, state);
     console.log(`[archive] Wrote updated state to ${stateFile}`);
   }
 
@@ -474,18 +480,13 @@ apiRoutes.post("/status-update", async (c) => {
           // Only switch to waiting_input if we haven't received post_tool yet
           if (session.preToolTime) {
             session.status = "waiting_input";
-            // Broadcast the status change
-            for (const client of session.clients) {
-              if (client.readyState === 1) {
-                client.send(JSON.stringify({
-                  type: "status",
-                  status: "waiting_input",
-                  isRestored: session.isRestored,
-                  currentTool: session.currentTool,
-                  hookEvent: "permission_timeout",
-                }));
-              }
-            }
+            broadcastToSession(session, {
+              type: "status",
+              status: "waiting_input",
+              isRestored: session.isRestored,
+              currentTool: session.currentTool,
+              hookEvent: "permission_timeout",
+            });
           }
         }, 2500);
       } else {
@@ -518,17 +519,13 @@ apiRoutes.post("/status-update", async (c) => {
     session.lastHookEvent = hookEvent;
 
     // Broadcast status change to connected clients
-    for (const client of session.clients) {
-      if (client.readyState === 1) {
-        client.send(JSON.stringify({
-          type: "status",
-          status: session.status,
-          isRestored: session.isRestored,
-          currentTool: session.currentTool,
-          hookEvent: hookEvent,
-        }));
-      }
-    }
+    broadcastToSession(session, {
+      type: "status",
+      status: session.status,
+      isRestored: session.isRestored,
+      currentTool: session.currentTool,
+      hookEvent: hookEvent,
+    });
 
     return c.json({ success: true });
   }
@@ -604,14 +601,15 @@ apiRoutes.post("/canvases/reorder", async (c) => {
 
   if (!state.canvases) return c.json({ error: "No canvases" }, 400);
 
-  const reordered = canvasIds.map((id: string, index: number) => {
-    const canvas = state.canvases!.find(c => c.id === id);
-    if (canvas) canvas.order = index;
-    return canvas;
-  }).filter(Boolean);
-
-  state.canvases = reordered;
-  saveCanvases(state.canvases);
+  // Only update order for canvases in the list — don't drop missing ones
+  const orderMap = new Map(canvasIds.map((id: string, i: number) => [id, i]));
+  for (const canvas of state.canvases!) {
+    if (orderMap.has(canvas.id)) {
+      canvas.order = orderMap.get(canvas.id)!;
+    }
+  }
+  state.canvases!.sort((a, b) => a.order - b.order);
+  saveCanvases(state.canvases!);
 
   return c.json({ success: true });
 });
@@ -629,6 +627,10 @@ import {
   searchGitHubIssues,
   parseGitHubUrl,
 } from "../services/github";
+import {
+  searchConversations,
+  getClaudeProjects,
+} from "../services/conversationIndex";
 
 // Get issues from a GitHub repo (no auth needed for public repos)
 apiRoutes.get("/github/issues", async (c) => {
@@ -696,6 +698,36 @@ apiRoutes.get("/github/issue/:owner/:repo/:number", async (c) => {
     const issue = await fetchGitHubIssue(owner, repo, number);
     if (!issue) return c.json({ error: "Issue not found" }, 404);
     return c.json(issue);
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// ============ Claude Conversation Search ============
+
+// Search/list Claude Code conversations (FTS5 full-text search)
+apiRoutes.get("/claude/conversations", (c) => {
+  const query = c.req.query("q");
+  const projectPath = c.req.query("projectPath");
+  const limit = parseInt(c.req.query("limit") || "30", 10);
+
+  try {
+    const conversations = searchConversations({
+      query: query || undefined,
+      projectPath: projectPath || undefined,
+      limit,
+    });
+    return c.json({ conversations });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// List available Claude Code projects
+apiRoutes.get("/claude/projects", (c) => {
+  try {
+    const projects = getClaudeProjects();
+    return c.json(projects);
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
