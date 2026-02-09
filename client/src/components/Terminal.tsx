@@ -74,10 +74,13 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     term.loadAddon(webLinksAddon);
 
     term.open(terminalRef.current);
-    
+
     // Reset all terminal attributes before receiving buffered content
     term.write("\x1b[0m\x1b[?25h");
-    
+
+    // Auto-focus so user can type immediately
+    term.focus();
+
     setTimeout(() => fitAddon.fit(), 50);
 
     xtermRef.current = term;
