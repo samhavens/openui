@@ -34,7 +34,7 @@ OpenUI gives you a visual command center where each agent is a node on a canvas:
 ### Setup
 
 ```bash
-git clone https://github.com/JJ27/openui.git
+git clone -b stable https://github.com/JJ27/openui.git
 cd openui
 bun install && cd client && bun install && cd ..
 bun link

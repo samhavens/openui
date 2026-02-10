@@ -255,9 +255,17 @@ function AppContent() {
           for (const sessionData of sessionsData) {
             if (sessionData.nodeId && sessionData.status) {
               const existing = currentSessions.get(sessionData.nodeId);
-              if (existing && existing.status !== sessionData.status) {
-                console.log(`[poll] Updating ${sessionData.nodeId} status: ${existing.status} -> ${sessionData.status}`);
-                updateSession(sessionData.nodeId, { status: sessionData.status });
+              if (existing) {
+                const updates: Record<string, any> = {};
+                if (existing.status !== sessionData.status) {
+                  updates.status = sessionData.status;
+                }
+                if ((existing.longRunningTool || false) !== (sessionData.longRunningTool || false)) {
+                  updates.longRunningTool = sessionData.longRunningTool || false;
+                }
+                if (Object.keys(updates).length > 0) {
+                  updateSession(sessionData.nodeId, updates);
+                }
               }
             }
           }

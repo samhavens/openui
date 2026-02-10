@@ -101,7 +101,10 @@ Bun.serve<WebSocketData>({
       ws.send(JSON.stringify({
         type: "status",
         status: session.status,
-        isRestored: session.isRestored
+        isRestored: session.isRestored,
+        currentTool: session.currentTool,
+        gitBranch: session.gitBranch,
+        longRunningTool: session.longRunningTool || false,
       }));
     },
     message(ws, message) {

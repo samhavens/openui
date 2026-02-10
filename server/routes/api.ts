@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, createWorktree } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { join } from "path";
@@ -162,6 +162,7 @@ apiRoutes.get("/sessions", (c) => {
         ticketId: session.ticketId,
         ticketTitle: session.ticketTitle,
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
+        longRunningTool: session.longRunningTool || false,
       };
     });
   return c.json(sessionList);
@@ -409,12 +410,40 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   const newNodeId = `node-${now}-0`;
 
   const parentName = session.customName || session.agentName || "Agent";
-  const customName = `${parentName} (fork)`;
+  const customName = body.customName || `${parentName} (fork)`;
+  const customColor = body.customColor || session.customColor;
+
+  // Determine working directory — optionally create a worktree
+  let effectiveCwd = body.cwd || session.cwd;
+  let worktreePath: string | undefined = session.worktreePath;
+  let originalCwd = session.originalCwd || session.cwd;
+  let gitBranch = session.gitBranch;
+
+  if (body.createWorktree && body.branchName) {
+    const wt = createWorktree({
+      cwd: effectiveCwd,
+      branchName: body.branchName,
+      baseBranch: body.baseBranch || "main",
+    });
+    if (wt.success && wt.worktreePath) {
+      worktreePath = wt.worktreePath;
+      originalCwd = effectiveCwd;
+      effectiveCwd = wt.worktreePath;
+      gitBranch = wt.branchName || body.branchName;
+    } else {
+      return c.json({ error: `Failed to create worktree: ${wt.error}` }, 400);
+    }
+  } else if (body.cwd) {
+    // Custom directory without worktree — detect git branch
+    gitBranch = getGitBranch(effectiveCwd) || undefined;
+    worktreePath = undefined;
+    originalCwd = undefined;
+  }
 
   const { spawn } = await import("bun-pty");
   const ptyProcess = spawn("/bin/bash", [], {
     name: "xterm-256color",
-    cwd: session.cwd,
+    cwd: effectiveCwd,
     env: {
       ...process.env,
       TERM: "xterm-256color",
@@ -429,10 +458,10 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     agentId: session.agentId,
     agentName: session.agentName,
     command: session.command,  // Base command only — no --fork-session
-    cwd: session.cwd,
-    originalCwd: session.originalCwd,
-    worktreePath: session.worktreePath,
-    gitBranch: session.gitBranch,
+    cwd: effectiveCwd,
+    originalCwd,
+    worktreePath,
+    gitBranch,
     createdAt: new Date().toISOString(),
     clients: new Set() as any,
     outputBuffer: [] as string[],
@@ -441,7 +470,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     lastInputTime: 0,
     recentOutputSize: 0,
     customName,
-    customColor: session.customColor,
+    customColor,
     nodeId: newNodeId,
     isRestored: false,
     autoResumed: false,
@@ -495,15 +524,15 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   return c.json({
     sessionId: newSessionId,
     nodeId: newNodeId,
-    cwd: session.cwd,
-    originalCwd: session.originalCwd,
-    worktreePath: session.worktreePath,
-    gitBranch: session.gitBranch,
+    cwd: effectiveCwd,
+    originalCwd,
+    worktreePath,
+    gitBranch,
     canvasId,
     customName,
     agentId: session.agentId,
     agentName: session.agentName,
-    customColor: session.customColor,
+    customColor,
   });
 });
 
@@ -686,7 +715,8 @@ apiRoutes.post("/status-update", async (c) => {
       }
     } else if (status === "post_tool") {
       // PostToolUse fired - tool completed, clear the permission timeout
-      effectiveStatus = "running";
+      // If session is already idle (Stop fired), don't flip back to running
+      effectiveStatus = session.status === "idle" ? "idle" : "running";
       session.preToolTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);

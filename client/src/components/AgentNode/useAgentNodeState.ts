@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useStore, AgentSession } from "../../stores/useStore";
+import type { ForkDialogResult } from "../ForkDialog";
 
 interface AgentNodeData {
   sessionId: string;
@@ -17,6 +18,7 @@ export function useAgentNodeState(
     useStore();
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [forkDialogOpen, setForkDialogOpen] = useState(false);
 
   // Close context menu on outside click
   useEffect(() => {
@@ -52,11 +54,15 @@ export function useAgentNodeState(
     setSidebarOpen(false);
   };
 
-  const handleFork = async () => {
+  const handleFork = () => {
+    setForkDialogOpen(true);
+    setContextMenu(null);
+  };
+
+  const handleForkConfirm = async (opts: ForkDialogResult) => {
     const sessionId = session?.sessionId || nodeData.sessionId;
     if (!sessionId) return;
 
-    // Get parent node position
     const parentNode = useStore.getState().nodes.find(n => n.id === id);
     const parentPos = parentNode?.position || { x: 0, y: 0 };
     const forkPos = { x: parentPos.x + 250, y: parentPos.y + 60 };
@@ -65,7 +71,18 @@ export function useAgentNodeState(
     const res = await fetch(`/api/sessions/${sessionId}/fork`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ position: forkPos, canvasId: activeCanvasId }),
+      body: JSON.stringify({
+        position: forkPos,
+        canvasId: activeCanvasId,
+        customName: opts.name,
+        customColor: opts.color,
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+        ...(opts.branchName ? {
+          branchName: opts.branchName,
+          baseBranch: opts.baseBranch,
+          createWorktree: opts.createWorktree,
+        } : {}),
+      }),
     });
 
     if (!res.ok) return;
@@ -77,11 +94,12 @@ export function useAgentNodeState(
       type: "agent",
       position: forkPos,
       data: {
-        label: data.customName || "Fork",
+        label: data.customName || opts.name || "Fork",
         agentId: data.agentId || session?.agentId || "claude",
-        color: data.customColor || session?.customColor || session?.color || nodeData.color || "#22C55E",
-        icon: nodeData.icon || "sparkles",
+        color: data.customColor || opts.color || session?.color || "#22C55E",
+        icon: opts.icon || nodeData.icon || "sparkles",
         sessionId: data.sessionId,
+        canvasId: activeCanvasId,
       },
     });
 
@@ -91,7 +109,7 @@ export function useAgentNodeState(
       agentId: data.agentId || session?.agentId || "claude",
       agentName: data.agentName || session?.agentName || "Claude Code",
       command: session?.command || "llm agent claude",
-      color: data.customColor || session?.customColor || session?.color || "#22C55E",
+      color: data.customColor || opts.color || session?.color || "#22C55E",
       createdAt: new Date().toISOString(),
       cwd: data.cwd || session?.cwd || "",
       originalCwd: data.originalCwd,
@@ -103,6 +121,7 @@ export function useAgentNodeState(
 
     setSelectedNodeId(data.nodeId);
     setSidebarOpen(true);
+    setForkDialogOpen(false);
   };
 
   const canFork = session?.agentId === "claude";
@@ -116,7 +135,10 @@ export function useAgentNodeState(
     handleContextMenu,
     handleDelete,
     handleFork,
+    handleForkConfirm,
     canFork,
     closeContextMenu,
+    forkDialogOpen,
+    setForkDialogOpen,
   };
 }

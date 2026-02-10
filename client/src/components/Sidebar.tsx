@@ -22,6 +22,7 @@ import {
 import { useStore, AgentStatus } from "../stores/useStore";
 import { Terminal } from "./Terminal";
 import { ResizeHandle } from "./ResizeHandle";
+import { ForkDialog, type ForkDialogResult } from "./ForkDialog";
 
 const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   running: { label: "Running", color: "#22C55E" },
@@ -76,6 +77,7 @@ export function Sidebar() {
   const [editColor, setEditColor] = useState("");
   const [editIcon, setEditIcon] = useState("");
   const [terminalKey, setTerminalKey] = useState(0);
+  const [forkDialogOpen, setForkDialogOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem("openui-sidebar-width");
     return saved ? parseInt(saved, 10) : 512;
@@ -111,7 +113,11 @@ export function Sidebar() {
 
   const canFork = session?.agentId === "claude";
 
-  const handleFork = async () => {
+  const handleFork = () => {
+    setForkDialogOpen(true);
+  };
+
+  const handleForkConfirm = async (opts: ForkDialogResult) => {
     if (!selectedNodeId || !session) return;
     const parentNode = nodes.find(n => n.id === selectedNodeId);
     const parentPos = parentNode?.position || { x: 0, y: 0 };
@@ -120,7 +126,18 @@ export function Sidebar() {
     const res = await fetch(`/api/sessions/${session.sessionId}/fork`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ position: forkPos, canvasId: activeCanvasId }),
+      body: JSON.stringify({
+        position: forkPos,
+        canvasId: activeCanvasId,
+        customName: opts.name,
+        customColor: opts.color,
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+        ...(opts.branchName ? {
+          branchName: opts.branchName,
+          baseBranch: opts.baseBranch,
+          createWorktree: opts.createWorktree,
+        } : {}),
+      }),
     });
     if (!res.ok) return;
     const data = await res.json();
@@ -131,11 +148,12 @@ export function Sidebar() {
       type: "agent",
       position: forkPos,
       data: {
-        label: data.customName || "Fork",
+        label: data.customName || opts.name || "Fork",
         agentId: data.agentId || session.agentId,
-        color: data.customColor || session.customColor || session.color,
-        icon: nodeData?.icon || "sparkles",
+        color: data.customColor || opts.color || session.color,
+        icon: opts.icon || nodeData?.icon || "sparkles",
         sessionId: data.sessionId,
+        canvasId: activeCanvasId,
       },
     });
     addSession(data.nodeId, {
@@ -144,7 +162,7 @@ export function Sidebar() {
       agentId: data.agentId || session.agentId,
       agentName: data.agentName || session.agentName,
       command: session.command,
-      color: data.customColor || session.customColor || session.color,
+      color: data.customColor || opts.color || session.color,
       createdAt: new Date().toISOString(),
       cwd: data.cwd || session.cwd,
       originalCwd: data.originalCwd,
@@ -154,6 +172,7 @@ export function Sidebar() {
       customColor: data.customColor,
     });
     setSelectedNodeId(data.nodeId);
+    setForkDialogOpen(false);
   };
 
   const displayColor = editColor || session?.customColor || session?.color || "#888";
@@ -161,6 +180,7 @@ export function Sidebar() {
   const isDisconnected = session?.status === "disconnected";
 
   return (
+    <>
     <AnimatePresence>
       {sidebarOpen && session && (
         <motion.div
@@ -503,5 +523,18 @@ export function Sidebar() {
         </motion.div>
       )}
     </AnimatePresence>
+
+    {session && (
+      <ForkDialog
+        open={forkDialogOpen}
+        onClose={() => setForkDialogOpen(false)}
+        parentName={session.customName || session.agentName || "Agent"}
+        parentColor={session.customColor || session.color || "#22C55E"}
+        parentIcon={(node?.data as any)?.icon || "sparkles"}
+        parentCwd={session.cwd || ""}
+        onConfirm={handleForkConfirm}
+      />
+    )}
+    </>
   );
 }

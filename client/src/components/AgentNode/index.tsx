@@ -5,6 +5,7 @@ import { useStore, AgentStatus } from "../../stores/useStore";
 import { AgentNodeCard } from "./AgentNodeCard";
 import { AgentNodeContextMenu } from "./AgentNodeContextMenu";
 import { useAgentNodeState } from "./useAgentNodeState";
+import { ForkDialog } from "../ForkDialog";
 
 const iconMap: Record<string, any> = {
   sparkles: Sparkles,
@@ -41,8 +42,11 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
     handleContextMenu,
     handleDelete,
     handleFork,
+    handleForkConfirm,
     canFork,
     closeContextMenu,
+    forkDialogOpen,
+    setForkDialogOpen,
   } = useAgentNodeState(id, nodeData, session);
 
   const displayColor = session?.customColor || session?.color || nodeData.color || "#22C55E";
@@ -83,6 +87,16 @@ export const AgentNode = ({ id, data, selected }: NodeProps) => {
           showFork={canFork}
         />
       )}
+
+      <ForkDialog
+        open={forkDialogOpen}
+        onClose={() => setForkDialogOpen(false)}
+        parentName={session?.customName || session?.agentName || nodeData.label || "Agent"}
+        parentColor={session?.customColor || session?.color || nodeData.color || "#22C55E"}
+        parentIcon={nodeData.icon || "sparkles"}
+        parentCwd={session?.cwd || ""}
+        onConfirm={handleForkConfirm}
+      />
     </>
   );
 };
