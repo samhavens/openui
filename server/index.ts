@@ -20,8 +20,15 @@ app.use("*", cors());
 // API Routes
 app.route("/api", apiRoutes);
 
-// Serve static files
-app.use("/*", serveStatic({ root: "./client/dist" }));
+// Serve static files (no-cache on index.html so browser always gets fresh asset references)
+app.use("/*", serveStatic({
+  root: "./client/dist",
+  onFound: (path, c) => {
+    if (path.endsWith("index.html")) {
+      c.header("Cache-Control", "no-cache");
+    }
+  },
+}));
 
 // Restore sessions BEFORE starting server so API requests find populated sessions Map
 const migrationResult = migrateStateToHome();
@@ -64,7 +71,25 @@ Bun.serve<WebSocketData>({
       session.clients.add(ws);
 
       if (session.outputBuffer.length > 0 && !session.isRestored && session.pty) {
-        const history = session.outputBuffer.join("");
+        // Cap history to avoid blocking the event loop with huge JSON.stringify
+        // Terminal output full of ANSI escapes can expand 3-5x during JSON encoding
+        const MAX_HISTORY_BYTES = 512 * 1024; // 512KB raw → ~1-2MB JSON
+        let history = "";
+        let totalBytes = 0;
+        // Walk backwards to get the most recent output first
+        for (let i = session.outputBuffer.length - 1; i >= 0; i--) {
+          const chunk = session.outputBuffer[i];
+          if (totalBytes + chunk.length > MAX_HISTORY_BYTES) {
+            // Take partial from this chunk (the tail end)
+            const remaining = MAX_HISTORY_BYTES - totalBytes;
+            if (remaining > 0) {
+              history = chunk.slice(-remaining) + history;
+            }
+            break;
+          }
+          history = chunk + history;
+          totalBytes += chunk.length;
+        }
         ws.send(JSON.stringify({ type: "output", data: history }));
       } else if (session.isRestored || !session.pty) {
         ws.send(JSON.stringify({
