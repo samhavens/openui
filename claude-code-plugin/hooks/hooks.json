@@ -107,6 +107,18 @@
         ]
       }
     ],
+    "PermissionRequest": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/status-reporter.sh permission_request",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "*",

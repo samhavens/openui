@@ -646,10 +646,19 @@ apiRoutes.post("/status-update", async (c) => {
       signalSessionReady(openuiSessionId);
     }
 
-    // Handle pre_tool/post_tool for permission detection
+    // Handle pre_tool/post_tool/permission_request for status detection
     let effectiveStatus = status;
 
-    if (status === "pre_tool") {
+    if (status === "permission_request") {
+      // PermissionRequest hook — definitive signal that the agent needs user approval.
+      // Works for all tools including Bash/Task where timeout-based detection can't.
+      effectiveStatus = "waiting_input";
+      session.preToolTime = undefined;
+      if (session.permissionTimeout) {
+        clearTimeout(session.permissionTimeout);
+        session.permissionTimeout = undefined;
+      }
+    } else if (status === "pre_tool") {
       // AskUserQuestion means the agent needs user input, not "working"
       // (Both the specific AskUserQuestion matcher and wildcard * fire in parallel,
       // so this server-side check ensures the correct status regardless of arrival order)
@@ -671,28 +680,26 @@ apiRoutes.post("/status-update", async (c) => {
           clearTimeout(session.permissionTimeout);
         }
 
-        // If post_tool doesn't arrive within 2.5s, the tool may be waiting for permission.
-        // For Bash/Task, also check PTY output — if the command is running (auto-allowed),
-        // it produces terminal output. No output after PreToolUse = likely waiting for permission.
-        const preToolTimestamp = session.preToolTime!;
-        session.permissionTimeout = setTimeout(() => {
-          // Only switch to waiting_input if we haven't received post_tool yet
-          if (session.preToolTime) {
-            const longRunningTools = ["Bash", "Task"];
-            if (longRunningTools.includes(toolName) && session.lastOutputTime > preToolTimestamp) {
-              // Tool is running and producing output — not waiting for permission
-              return;
+        // Timeout-based permission detection as fallback for non-Bash/Task tools.
+        // Bash/Task are excluded since they can run for a long time — the PermissionRequest
+        // hook handles permission detection for those definitively.
+        const longRunningTools = ["Bash", "Task"];
+        if (!longRunningTools.includes(toolName)) {
+          session.permissionTimeout = setTimeout(() => {
+            if (session.preToolTime) {
+              session.status = "waiting_input";
+              broadcastToSession(session, {
+                type: "status",
+                status: "waiting_input",
+                isRestored: session.isRestored,
+                currentTool: session.currentTool,
+                hookEvent: "permission_timeout",
+              });
             }
-            session.status = "waiting_input";
-            broadcastToSession(session, {
-              type: "status",
-              status: "waiting_input",
-              isRestored: session.isRestored,
-              currentTool: session.currentTool,
-              hookEvent: "permission_timeout",
-            });
-          }
-        }, 2500);
+          }, 2500);
+        } else {
+          session.permissionTimeout = undefined;
+        }
 
         // Long-running tool detection: if a single tool runs > 5 min, flag it
         if (session.longRunningTimeout) {
