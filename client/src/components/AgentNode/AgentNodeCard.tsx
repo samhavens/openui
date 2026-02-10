@@ -112,9 +112,6 @@ export function AgentNodeCard({
         />
       )}
 
-      {/* Color bar at top */}
-      <div className="h-1 rounded-t-lg" style={{ backgroundColor: displayColor }} />
-
       {/* Status banner */}
       <div
         className="px-3 py-1.5 flex items-center justify-between relative"
