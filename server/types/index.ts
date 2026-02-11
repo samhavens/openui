@@ -44,6 +44,7 @@ export interface Session {
   // Permission detection
   preToolTime?: number;
   permissionTimeout?: ReturnType<typeof setTimeout>;
+  needsInputSince?: number; // Timestamp when waiting_input was set (for subagent override protection)
   // Long-running tool detection (server-side)
   longRunningTool?: boolean;
   longRunningTimeout?: ReturnType<typeof setTimeout>;

@@ -162,19 +162,19 @@ export function createWorktree(params: {
     suffix++;
   }
 
-  // Fetch latest from remote first
+  // Fetch latest from remote first (with timeout to avoid blocking the server)
   log(`\x1b[38;5;141m[worktree]\x1b[0m Fetching from remote...`);
-  spawnSync(["git", "fetch", "origin"], { cwd: gitRoot, stdout: "pipe", stderr: "pipe" });
+  spawnSync(["timeout", "15", "git", "fetch", "origin"], { cwd: gitRoot, stdout: "pipe", stderr: "pipe" });
 
   // Check if the original branch exists locally or remotely
   // (only relevant when no suffix was added; suffixed branches are always new)
-  const localBranch = spawnSync(["git", "rev-parse", "--verify", finalBranchName], {
+  const localBranch = spawnSync(["timeout", "5", "git", "rev-parse", "--verify", finalBranchName], {
     cwd: gitRoot,
     stdout: "pipe",
     stderr: "pipe",
   });
 
-  const remoteBranch = spawnSync(["git", "rev-parse", "--verify", `origin/${finalBranchName}`], {
+  const remoteBranch = spawnSync(["timeout", "5", "git", "rev-parse", "--verify", `origin/${finalBranchName}`], {
     cwd: gitRoot,
     stdout: "pipe",
     stderr: "pipe",
@@ -184,7 +184,7 @@ export function createWorktree(params: {
   if (localBranch.exitCode === 0) {
     // Branch exists locally, just add worktree
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree for existing branch: ${finalBranchName}`);
-    result = spawnSync(["git", "worktree", "add", worktreePath, finalBranchName], {
+    result = spawnSync(["timeout", "30", "git", "worktree", "add", worktreePath, finalBranchName], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",
@@ -192,7 +192,7 @@ export function createWorktree(params: {
   } else if (remoteBranch.exitCode === 0) {
     // Branch exists on remote, track it
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating worktree tracking remote branch: ${finalBranchName}`);
-    result = spawnSync(["git", "worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], {
+    result = spawnSync(["timeout", "30", "git", "worktree", "add", "--track", "-b", finalBranchName, worktreePath, `origin/${finalBranchName}`], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",
@@ -200,7 +200,7 @@ export function createWorktree(params: {
   } else {
     // Create new branch from base
     log(`\x1b[38;5;141m[worktree]\x1b[0m Creating new worktree with branch: ${finalBranchName} from ${baseBranch}`);
-    result = spawnSync(["git", "worktree", "add", "-b", finalBranchName, worktreePath, `origin/${baseBranch}`], {
+    result = spawnSync(["timeout", "30", "git", "worktree", "add", "-b", finalBranchName, worktreePath, `origin/${baseBranch}`], {
       cwd: gitRoot,
       stdout: "pipe",
       stderr: "pipe",

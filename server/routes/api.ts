@@ -654,6 +654,7 @@ apiRoutes.post("/status-update", async (c) => {
       // PermissionRequest hook — definitive signal that the agent needs user approval.
       // Works for all tools including Bash/Task where timeout-based detection can't.
       effectiveStatus = "waiting_input";
+      session.needsInputSince = Date.now();
       session.preToolTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
@@ -665,6 +666,7 @@ apiRoutes.post("/status-update", async (c) => {
       // so this server-side check ensures the correct status regardless of arrival order)
       if (toolName === "AskUserQuestion") {
         effectiveStatus = "waiting_input";
+        session.needsInputSince = Date.now();
         session.currentTool = toolName;
         if (session.permissionTimeout) {
           clearTimeout(session.permissionTimeout);
@@ -689,6 +691,7 @@ apiRoutes.post("/status-update", async (c) => {
           session.permissionTimeout = setTimeout(() => {
             if (session.preToolTime) {
               session.status = "waiting_input";
+              session.needsInputSince = Date.now();
               broadcastToSession(session, {
                 type: "status",
                 status: "waiting_input",
@@ -726,6 +729,10 @@ apiRoutes.post("/status-update", async (c) => {
       // PostToolUse fired - tool completed, clear the permission timeout
       // If session is already idle (Stop fired), don't flip back to running
       effectiveStatus = session.status === "idle" ? "idle" : "running";
+      // AskUserQuestion PostToolUse means the user answered — clear input protection
+      if (toolName === "AskUserQuestion") {
+        session.needsInputSince = undefined;
+      }
       session.preToolTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
@@ -741,6 +748,10 @@ apiRoutes.post("/status-update", async (c) => {
       // For other statuses, clear tool tracking if not actively using tools
       if (status !== "tool_calling" && status !== "running") {
         session.currentTool = undefined;
+      }
+      // UserPromptSubmit / Stop / idle — user is actively engaged, clear input protection
+      if (hookEvent === "UserPromptSubmit" || hookEvent === "Stop") {
+        session.needsInputSince = undefined;
       }
       session.preToolTime = undefined;
       if (session.permissionTimeout) {
@@ -759,6 +770,16 @@ apiRoutes.post("/status-update", async (c) => {
     // PostToolUse for parallel calls should not override idle.
     if (session.status === "idle" && effectiveStatus === "running" && hookEvent !== "UserPromptSubmit") {
       effectiveStatus = "idle";
+    }
+
+    // Protect waiting_input from being overwritten by running events from other subagents.
+    // Clear when user provides terminal input (e.g., approving a permission prompt).
+    if (session.needsInputSince && effectiveStatus === "running") {
+      if (session.lastInputTime > session.needsInputSince) {
+        session.needsInputSince = undefined;  // User responded via terminal
+      } else {
+        effectiveStatus = "waiting_input";  // Still waiting, protect from override
+      }
     }
 
     session.status = effectiveStatus;
