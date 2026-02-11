@@ -6,7 +6,7 @@ OpenUI turns Claude Code from a single-terminal tool into a full orchestration p
 
 ---
 
-![OpenUI Canvas](app-demo.png)
+![OpenUI Canvas](https://raw.githubusercontent.com/JJ27/openui/stable/app-demo.png)
 
 ## Why OpenUI
 
@@ -46,7 +46,7 @@ Browse and link GitHub issues directly from the new agent modal. Issues can auto
 Spin up 1-20 agents at once. OpenUI queues their startup to avoid OAuth port conflicts and positions them automatically on the canvas.
 
 ### Smart Permission & Long-Task Detection
-The server detects when an agent is waiting for permission approval and (upcoming) flags tools running longer than 5 minutes - so you know which agents need attention at a glance.
+The server detects when an agent is waiting for permission approval and flags tool calls running longer than 5 minutes - so you know which agents need attention at a glance.
 
 ### Self-Updating
 OpenUI auto-updates on startup via git pull. Choose between `stable` and `beta` update channels in settings.
