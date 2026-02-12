@@ -19,7 +19,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error" | "setting_up";
 
 export interface AgentSession {
   id: string;
@@ -44,6 +44,9 @@ export interface AgentSession {
   currentTool?: string;
   // Whether the current tool has been running for a long time (> 5 min)
   longRunningTool?: boolean;
+  // Worktree setup progress
+  setupProgress?: number;
+  setupPhase?: string;
   // Archive status
   archived?: boolean;
 }

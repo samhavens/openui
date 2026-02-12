@@ -136,6 +136,19 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               ...(msg.gitBranch ? { gitBranch: msg.gitBranch } : {}),
               longRunningTool: msg.longRunningTool || false,
             });
+          } else if (msg.type === "setup_progress") {
+            // Worktree setup progress
+            updateSession(nodeId, {
+              setupProgress: msg.progress,
+              setupPhase: msg.phase,
+            });
+          } else if (msg.type === "setup_complete") {
+            // Worktree setup done — transition to idle
+            updateSession(nodeId, {
+              status: "idle",
+              setupProgress: undefined,
+              setupPhase: undefined,
+            });
           }
         } catch (e) {
           term.write(event.data);

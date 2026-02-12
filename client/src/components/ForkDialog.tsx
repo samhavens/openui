@@ -10,6 +10,7 @@ import {
   Home,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   ChevronDown,
   Sparkles,
   Code,
@@ -20,6 +21,7 @@ import {
   Brain,
   Wand2,
 } from "lucide-react";
+import { useStore } from "../stores/useStore";
 
 const presetColors = [
   "#F97316", "#22C55E", "#3B82F6", "#8B5CF6", "#EC4899", "#EF4444", "#FBBF24", "#14B8A6"
@@ -44,6 +46,7 @@ export interface ForkDialogResult {
   branchName?: string;
   baseBranch?: string;
   createWorktree?: boolean;
+  sparseCheckout?: boolean;
 }
 
 interface ForkDialogProps {
@@ -84,8 +87,18 @@ export function ForkDialog({
   const [branchName, setBranchName] = useState("");
   const [baseBranch, setBaseBranch] = useState("main");
   const [createWorktree, setCreateWorktree] = useState(true);
+  const [checkoutType, setCheckoutType] = useState<"full" | "sparse">("full");
 
   const [isForking, setIsForking] = useState(false);
+
+  // Conflict warning
+  const sessions = useStore((state) => state.sessions);
+  const effectiveCwd = cwd || parentCwd;
+  const conflictingAgentCount = !branchName
+    ? Array.from(sessions.values()).filter(
+        (s) => s.cwd === effectiveCwd && !s.archived && s.status !== "disconnected"
+      ).length
+    : 0;
 
   // Reset form when modal opens
   useEffect(() => {
@@ -99,6 +112,7 @@ export function ForkDialog({
       setBranchName("");
       setBaseBranch("main");
       setCreateWorktree(true);
+      setCheckoutType("full");
       setIsForking(false);
     }
   }, [open, parentName, parentColor, parentIcon]);
@@ -142,7 +156,12 @@ export function ForkDialog({
       color,
       icon,
       ...(cwd && cwd !== parentCwd ? { cwd } : {}),
-      ...(branchName ? { branchName, baseBranch, createWorktree } : {}),
+      ...(branchName ? {
+        branchName,
+        baseBranch,
+        createWorktree,
+        ...(createWorktree && checkoutType === "sparse" ? { sparseCheckout: true } : {}),
+      } : {}),
     });
   };
 
@@ -398,6 +417,43 @@ export function ForkDialog({
                               <span className="text-sm text-zinc-300">Create git worktree</span>
                             </label>
 
+                            {/* Checkout type: full vs sparse */}
+                            {createWorktree && (
+                              <div className="space-y-2">
+                                <label className="text-xs text-zinc-500">Checkout type</label>
+                                <div className="space-y-1.5">
+                                  <label className="flex items-start gap-2 cursor-pointer px-2.5 py-2 rounded-md hover:bg-surface-hover transition-colors">
+                                    <input
+                                      type="radio"
+                                      name="forkCheckoutType"
+                                      checked={checkoutType === "full"}
+                                      onChange={() => setCheckoutType("full")}
+                                      className="mt-0.5 w-3.5 h-3.5 border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
+                                    />
+                                    <div>
+                                      <span className="text-sm text-zinc-300">Full repository</span>
+                                      <p className="text-[10px] text-zinc-500">Complete repo access. Reuses existing worktrees when available.</p>
+                                    </div>
+                                  </label>
+                                  <label className="flex items-start gap-2 cursor-pointer px-2.5 py-2 rounded-md hover:bg-surface-hover transition-colors">
+                                    <input
+                                      type="radio"
+                                      name="forkCheckoutType"
+                                      checked={checkoutType === "sparse"}
+                                      onChange={() => setCheckoutType("sparse")}
+                                      className="mt-0.5 w-3.5 h-3.5 border-zinc-600 bg-canvas text-indigo-600 focus:ring-indigo-500 focus:ring-offset-0"
+                                    />
+                                    <div>
+                                      <span className="text-sm text-zinc-300">Sparse checkout</span>
+                                      <p className="text-[10px] text-zinc-500">
+                                        Only checks out the working directory. Faster for large repos.
+                                      </p>
+                                    </div>
+                                  </label>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="flex items-start gap-2 px-3 py-2 rounded bg-zinc-900/50 border border-zinc-800">
                               <AlertCircle className="w-3.5 h-3.5 text-zinc-500 flex-shrink-0 mt-0.5" />
                               <p className="text-[11px] text-zinc-500 leading-relaxed">
@@ -409,6 +465,17 @@ export function ForkDialog({
                             </div>
                           </>
                         )}
+                      </div>
+                    )}
+
+                    {/* Conflict warning when no worktree */}
+                    {!branchName && conflictingAgentCount > 0 && (
+                      <div className="flex items-start gap-2 px-3 py-2 rounded bg-amber-500/10 border border-amber-500/20">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                        <p className="text-[11px] text-amber-400 leading-relaxed">
+                          {conflictingAgentCount} other agent{conflictingAgentCount > 1 ? "s are" : " is"} working in this directory.
+                          Write operations may conflict.
+                        </p>
                       </div>
                     )}
                   </div>

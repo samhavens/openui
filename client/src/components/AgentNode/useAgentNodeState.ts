@@ -81,6 +81,7 @@ export function useAgentNodeState(
           branchName: opts.branchName,
           baseBranch: opts.baseBranch,
           createWorktree: opts.createWorktree,
+          sparseCheckout: opts.sparseCheckout,
         } : {}),
       }),
     });

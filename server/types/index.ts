@@ -2,7 +2,7 @@ import type { IPty } from "bun-pty";
 import type { ServerWebSocket } from "bun";
 import type { Canvas } from "./canvas";
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error" | "setting_up";
 
 export interface Session {
   pty: IPty | null;
@@ -48,6 +48,11 @@ export interface Session {
   // Long-running tool detection (server-side)
   longRunningTool?: boolean;
   longRunningTimeout?: ReturnType<typeof setTimeout>;
+  // Worktree setup (async background creation)
+  setupStatus?: "creating_worktree" | "ready";
+  setupProgress?: number;
+  setupPhase?: string;
+  sparseCheckout?: boolean;
   // Archive status
   archived?: boolean;
   // Canvas/tab organization
@@ -77,6 +82,7 @@ export interface PersistedNode {
   worktreePath?: string;
   originalCwd?: string;
   gitBranch?: string;
+  sparseCheckout?: boolean;
   // Ticket/Issue info
   ticketId?: string;
   ticketTitle?: string;

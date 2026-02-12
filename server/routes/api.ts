@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, createWorktree } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, getGitRoot, createWorktree } from "../services/sessionManager";
+import * as worktreeRegistry from "../services/worktreeRegistry";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { join } from "path";
@@ -235,6 +236,7 @@ apiRoutes.post("/sessions", async (c) => {
     branchName,
     baseBranch,
     createWorktree: createWorktreeFlag,
+    sparseCheckout,
   } = body;
 
   const sessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -256,6 +258,7 @@ apiRoutes.post("/sessions", async (c) => {
       branchName,
       baseBranch,
       createWorktreeFlag,
+      sparseCheckout,
       ticketPromptTemplate: undefined,
     });
 
@@ -265,6 +268,7 @@ apiRoutes.post("/sessions", async (c) => {
       nodeId,
       cwd: result.cwd,
       gitBranch: result.gitBranch,
+      setupPending: result.setupPending || false,
     });
   } catch (error) {
     console.error("[session creation error]", error);
@@ -306,6 +310,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       nodeId: archivedNode.nodeId,
       isRestored: true,
       claudeSessionId: archivedNode.claudeSessionId,
+      sparseCheckout: archivedNode.sparseCheckout,
       archived: false,
       canvasId: archivedNode.canvasId,
       ticketId: archivedNode.ticketId,
@@ -318,6 +323,11 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
+  // Re-claim worktree in registry if it was released during archive
+  if (session.worktreePath && existsSync(session.worktreePath)) {
+    worktreeRegistry.register(session.worktreePath, getGitRoot(session.originalCwd || session.cwd) || "", sessionId, session.gitBranch || undefined);
+  }
+
   const startFn = async () => {
     const { spawn } = await import("bun-pty");
     const ptyProcess = spawn("/bin/bash", [], {
@@ -326,7 +336,8 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       env: {
         ...process.env,
         TERM: "xterm-256color",
-        OPENUI_SESSION_ID: sessionId,  // Pass session ID for plugin hooks
+        OPENUI_SESSION_ID: sessionId,
+        ...(session.sparseCheckout ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
       },
       rows: 30,
       cols: 120,
@@ -420,6 +431,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   let gitBranch = session.gitBranch;
 
   if (body.createWorktree && body.branchName) {
+    // Use createSession's worktree logic via createWorktree for forks
     const wt = await createWorktree({
       cwd: effectiveCwd,
       branchName: body.branchName,
@@ -430,6 +442,11 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
       originalCwd = effectiveCwd;
       effectiveCwd = wt.worktreePath;
       gitBranch = wt.branchName || body.branchName;
+      // Register in worktree registry
+      const gitRoot = getGitRoot(originalCwd);
+      if (gitRoot) {
+        worktreeRegistry.register(wt.worktreePath, gitRoot, newSessionId, gitBranch || undefined);
+      }
     } else {
       return c.json({ error: `Failed to create worktree: ${wt.error}` }, 400);
     }
@@ -582,6 +599,10 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
     // Session is active (in sessions Map) - update it directly
     console.log(`[archive] Updating active session ${sessionId} archived=${archived}`);
     session.archived = archived;
+    // Release worktree back to registry for reuse when archiving
+    if (archived && session.worktreePath) {
+      worktreeRegistry.release(session.worktreePath);
+    }
     saveState(sessions);
   } else {
     // Session is not active (archived) - update state.json directly

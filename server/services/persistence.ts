@@ -293,6 +293,7 @@ export function saveState(sessions: Map<string, Session>) {
       worktreePath: session.worktreePath,
       originalCwd: session.originalCwd,
       gitBranch: session.gitBranch,
+      sparseCheckout: session.sparseCheckout || undefined,
       // Ticket info
       ticketId: session.ticketId,
       ticketTitle: session.ticketTitle,
