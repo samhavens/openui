@@ -297,6 +297,7 @@ export async function createSession(params: {
   let gitBranch: string | null = null;
   let setupPending = false;
   let isSparse = false;
+  let pendingSetup: { gitRoot: string; branchName: string; baseBranch: string; originalCwd: string } | null = null;
 
   // If worktree requested, try fast paths first
   if (createWorktreeFlag && branchName && baseBranch) {
@@ -393,20 +394,12 @@ export async function createSession(params: {
         }
       }
 
-      // No registry hit (or reuse failed) — try the standard createWorktree
+      // No registry hit (or reuse failed) — create fresh in background with progress
       if (!worktreePath) {
-        const result = await createWorktree({ cwd: originalCwd, branchName, baseBranch });
-        if (result.success && result.worktreePath) {
-          worktreePath = result.worktreePath;
-          workingDir = result.worktreePath;
-          mainRepoPath = originalCwd;
-          gitBranch = result.branchName || branchName;
-          worktreeRegistry.register(result.worktreePath, gitRoot, sessionId, gitBranch || undefined);
-          log(`\x1b[38;5;141m[session]\x1b[0m Worktree created fresh: ${workingDir}`);
-        } else {
-          logError(`\x1b[38;5;141m[session]\x1b[0m Failed to create worktree:`, result.error);
-          throw new Error(`Failed to create worktree: ${result.error}`);
-        }
+        setupPending = true;
+        // Store context for async completion
+        pendingSetup = { gitRoot, branchName, baseBranch, originalCwd };
+        log(`\x1b[38;5;141m[session]\x1b[0m Pool miss — will create worktree in background`);
       }
     }
   }
@@ -425,22 +418,9 @@ export async function createSession(params: {
     gitBranch = getGitBranch(workingDir);
   }
 
-  const ptyProcess = spawnPty("/bin/bash", [], {
-    name: "xterm-256color",
-    cwd: workingDir,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      OPENUI_SESSION_ID: sessionId,
-      ...(isSparse ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
-    },
-    rows: 30,
-    cols: 120,
-  });
-
   const now = Date.now();
   const session: Session = {
-    pty: ptyProcess,
+    pty: null as any,
     agentId,
     agentName,
     command,
@@ -451,7 +431,7 @@ export async function createSession(params: {
     createdAt: new Date().toISOString(),
     clients: new Set(),
     outputBuffer: [],
-    status: "idle",
+    status: setupPending ? "setting_up" as any : "idle",
     lastOutputTime: now,
     lastInputTime: 0,
     recentOutputSize: 0,
@@ -460,6 +440,9 @@ export async function createSession(params: {
     nodeId,
     isRestored: false,
     sparseCheckout: isSparse,
+    setupStatus: setupPending ? "creating_worktree" : undefined,
+    setupProgress: setupPending ? 0 : undefined,
+    setupPhase: setupPending ? "Preparing worktree" : undefined,
     ticketId,
     ticketTitle,
     ticketUrl,
@@ -467,44 +450,60 @@ export async function createSession(params: {
 
   sessions.set(sessionId, session);
 
-  // Output decay
-  const resetInterval = setInterval(() => {
-    if (!sessions.has(sessionId) || !session.pty) {
-      clearInterval(resetInterval);
-      return;
-    }
-    session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
-  }, 500);
+  // Helper to spawn PTY and start the agent
+  const startPty = (cwd: string) => {
+    const ptyProcess = spawnPty("/bin/bash", [], {
+      name: "xterm-256color",
+      cwd,
+      env: {
+        ...process.env,
+        TERM: "xterm-256color",
+        OPENUI_SESSION_ID: sessionId,
+        ...(isSparse ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
+      },
+      rows: 30,
+      cols: 120,
+    });
 
-  // PTY output handler
-  ptyProcess.onData((data: string) => {
-    session.outputBuffer.push(data);
-    if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
-      session.outputBuffer.shift();
-    }
+    session.pty = ptyProcess;
 
-    session.lastOutputTime = Date.now();
-    session.recentOutputSize += data.length;
+    // Output decay
+    const resetInterval = setInterval(() => {
+      if (!sessions.has(sessionId) || !session.pty) {
+        clearInterval(resetInterval);
+        return;
+      }
+      session.recentOutputSize = Math.max(0, session.recentOutputSize - 50);
+    }, 500);
 
-    // Just broadcast output - status comes from plugin hooks
-    broadcastToSession(session, { type: "output", data });
-  });
+    // PTY output handler
+    ptyProcess.onData((data: string) => {
+      session.outputBuffer.push(data);
+      if (session.outputBuffer.length > MAX_BUFFER_SIZE) {
+        session.outputBuffer.shift();
+      }
 
-  // Run the command (inject plugin-dir for Claude if available)
-  const finalCommand = injectPluginDir(command, agentId);
-  log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
+      session.lastOutputTime = Date.now();
+      session.recentOutputSize += data.length;
 
-  const writeCommand = (pty: typeof ptyProcess) => {
+      // Just broadcast output - status comes from plugin hooks
+      broadcastToSession(session, { type: "output", data });
+    });
+
+    // Run the command (inject plugin-dir for Claude if available)
+    const finalCommand = injectPluginDir(command, agentId);
+    log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
+
     setTimeout(() => {
-      pty.write(`${finalCommand}\r`);
+      ptyProcess.write(`${finalCommand}\r`);
 
       // If sparse checkout, inject a startup hint after the agent command
-      if (isSparse && worktreePath) {
-        const gitRoot = getGitRoot(worktreePath);
-        const relDir = gitRoot ? relative(gitRoot, workingDir) : workingDir;
+      if (isSparse && session.worktreePath) {
+        const wtGitRoot = getGitRoot(session.worktreePath);
+        const relDir = wtGitRoot ? relative(wtGitRoot, cwd) : cwd;
         setTimeout(() => {
           const hint = `Note: This worktree uses sparse checkout. Currently checked out: ${relDir}/\nFiles outside this directory are not available until expanded.\nTo manually expand: git sparse-checkout add <directory>`;
-          pty.write(hint + "\r");
+          ptyProcess.write(hint + "\r");
         }, 2000);
       }
 
@@ -517,17 +516,101 @@ export async function createSession(params: {
             .replace(/\{\{url\}\}/g, ticketUrl)
             .replace(/\{\{id\}\}/g, ticketId || "")
             .replace(/\{\{title\}\}/g, ticketTitle || "");
-          pty.write(ticketPrompt + "\r");
+          ptyProcess.write(ticketPrompt + "\r");
         }, isSparse ? 4000 : 2000);
       }
     }, 300);
   };
 
-  // Start immediately
-  writeCommand(ptyProcess);
+  if (setupPending && pendingSetup) {
+    // Background worktree creation with progress
+    const { gitRoot, branchName: pendBranch, baseBranch: pendBase, originalCwd: pendCwd } = pendingSetup;
 
-  log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}${isSparse ? " (sparse)" : ""}`);
+    completeSessionSetup(session, sessionId, gitRoot, pendBranch, pendBase, pendCwd, startPty);
+  } else {
+    // Immediate start — worktree already ready (or no worktree needed)
+    startPty(workingDir);
+  }
+
+  log(`\x1b[38;5;141m[session]\x1b[0m Created ${sessionId} for ${agentName}${ticketId ? ` (ticket: ${ticketId})` : ""}${isSparse ? " (sparse)" : ""}${setupPending ? " (setup pending)" : ""}`);
   return { session, cwd: workingDir, gitBranch: gitBranch || undefined, setupPending };
+}
+
+/**
+ * Complete session setup asynchronously when worktree creation is done in the background.
+ * Creates the worktree with progress reporting, then spawns the PTY.
+ */
+async function completeSessionSetup(
+  session: Session,
+  sessionId: string,
+  gitRoot: string,
+  branchName: string,
+  baseBranch: string,
+  originalCwd: string,
+  startPty: (cwd: string) => void,
+): Promise<void> {
+  try {
+    const result = await worktreeRegistry.createFresh({
+      gitRoot,
+      sessionId,
+      onProgress: (percent, phase) => {
+        session.setupProgress = percent;
+        session.setupPhase = phase;
+        broadcastToSession(session, {
+          type: "setup_progress",
+          progress: percent,
+          phase,
+        });
+      },
+    });
+
+    if (!result.path || result.error) {
+      logError(`\x1b[38;5;141m[session]\x1b[0m Background worktree creation failed:`, result.error);
+      session.status = "error";
+      session.setupStatus = undefined;
+      session.setupProgress = undefined;
+      session.setupPhase = undefined;
+      broadcastToSession(session, {
+        type: "setup_complete",
+        error: result.error || "Failed to create worktree",
+      });
+      return;
+    }
+
+    // Assign branch to the fresh worktree
+    const assignResult = await worktreeRegistry.assignBranch(result.path, branchName, baseBranch, gitRoot);
+    const gitBranch = assignResult.success ? assignResult.branchName : branchName;
+
+    // Update session with worktree info
+    session.worktreePath = result.path;
+    session.cwd = result.path;
+    session.originalCwd = originalCwd;
+    session.gitBranch = gitBranch;
+    session.setupStatus = "ready";
+    session.setupProgress = undefined;
+    session.setupPhase = undefined;
+    session.status = "idle";
+
+    log(`\x1b[38;5;141m[session]\x1b[0m Background worktree ready: ${result.path} -> ${gitBranch}`);
+
+    // Spawn PTY now that worktree is ready
+    startPty(result.path);
+
+    // Notify clients setup is complete
+    broadcastToSession(session, { type: "setup_complete" });
+
+    // Save state with updated worktree info
+    const { saveState } = require("./persistence");
+    saveState(sessions);
+  } catch (error) {
+    logError(`\x1b[38;5;141m[session]\x1b[0m completeSessionSetup failed:`, error);
+    session.status = "error";
+    session.setupStatus = undefined;
+    broadcastToSession(session, {
+      type: "setup_complete",
+      error: String(error),
+    });
+  }
 }
 
 export function deleteSession(sessionId: string) {
@@ -724,7 +807,7 @@ export function autoResumeSessions() {
 
     // Claude agents go through the queue to prevent OAuth port contention
     if (session.agentId === "claude") {
-      enqueueSessionStart(node.sessionId, startFn);
+      enqueueSessionStart(node.sessionId, startFn, () => session.outputBuffer);
     } else {
       // Non-Claude agents start immediately (no OAuth)
       startFn();

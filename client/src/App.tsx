@@ -19,6 +19,7 @@ import { NewSessionModal } from "./components/NewSessionModal";
 import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
 import { CanvasTabs } from "./components/CanvasTabs";
+import { AuthBanner } from "./components/AuthBanner";
 
 const nodeTypes = {
   agent: AgentNode,
@@ -538,6 +539,7 @@ function AppContent() {
   return (
     <div className="w-screen h-screen bg-canvas overflow-hidden flex flex-col">
       <Header />
+      <AuthBanner />
       <CanvasTabs />
 
       <div className="flex-1 relative">

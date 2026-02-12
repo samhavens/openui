@@ -430,6 +430,8 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   let originalCwd = session.originalCwd || session.cwd;
   let gitBranch = session.gitBranch;
 
+  const isSparse = !!(body.sparseCheckout && body.createWorktree && body.branchName);
+
   if (body.createWorktree && body.branchName) {
     // Use createSession's worktree logic via createWorktree for forks
     const wt = await createWorktree({
@@ -465,6 +467,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
       ...process.env,
       TERM: "xterm-256color",
       OPENUI_SESSION_ID: newSessionId,
+      ...(isSparse ? { OPENUI_SPARSE_CHECKOUT: "1" } : {}),
     },
     rows: 30,
     cols: 120,
@@ -498,6 +501,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
     ticketId: session.ticketId,
     ticketTitle: session.ticketTitle,
     ticketUrl: session.ticketUrl,
+    sparseCheckout: isSparse,
   };
 
   sessions.set(newSessionId, newSession);

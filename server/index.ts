@@ -6,6 +6,7 @@ import { apiRoutes } from "./routes/api";
 import { sessions, restoreSessions, autoResumeSessions } from "./services/sessionManager";
 import { saveState, migrateStateToHome } from "./services/persistence";
 import * as worktreeRegistry from "./services/worktreeRegistry";
+import { setAuthBroadcast } from "./services/sessionStartQueue";
 import type { WebSocketData } from "./types";
 
 const app = new Hono();
@@ -151,6 +152,23 @@ Bun.serve<WebSocketData>({
     },
   },
 });
+
+// Wire up auth broadcast — notify all connected clients when OAuth is needed/complete
+function broadcastToAll(message: object) {
+  const json = JSON.stringify(message);
+  for (const session of sessions.values()) {
+    for (const client of session.clients) {
+      try {
+        if (client.readyState === 1) client.send(json);
+      } catch {}
+    }
+  }
+}
+
+setAuthBroadcast(
+  (url) => broadcastToAll({ type: "auth_required", url }),
+  () => broadcastToAll({ type: "auth_complete" }),
+);
 
 // Auto-resume non-archived sessions after a short delay
 setTimeout(() => {
