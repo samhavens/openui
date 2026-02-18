@@ -180,7 +180,6 @@ process.on("SIGINT", async () => {
   saveState(sessions);
   for (const [, session] of sessions) {
     if (session.pty) session.pty.kill();
-    if (session.stateTrackerPty) session.stateTrackerPty.kill();
   }
   process.exit(0);
 });

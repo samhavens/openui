@@ -11,6 +11,11 @@ const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
 const logError = QUIET ? () => {} : console.error.bind(console);
 
+// Detect available CLI at startup
+const HAS_ISAAC = spawnSync(["which", "isaac"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
+export const DEFAULT_CLAUDE_COMMAND = HAS_ISAAC ? "isaac claude" : "llm agent claude";
+log(`\x1b[38;5;141m[cli]\x1b[0m Detected CLI: ${DEFAULT_CLAUDE_COMMAND} (isaac ${HAS_ISAAC ? "found" : "not found"})`);
+
 // Get the OpenUI plugin directory path
 function getPluginDir(): string | null {
   // Check for plugin in ~/.openui/claude-code-plugin (installed via curl)
@@ -128,6 +133,7 @@ export async function createSession(params: {
   ticketTitle?: string;
   ticketUrl?: string;
   branchName?: string;
+  baseBranch?: string;
   createWorktreeFlag?: boolean;
   prNumber?: string;
   ticketPromptTemplate?: string;
@@ -145,6 +151,7 @@ export async function createSession(params: {
     ticketTitle,
     ticketUrl,
     branchName,
+    baseBranch,
     createWorktreeFlag,
     prNumber,
     ticketPromptTemplate,
@@ -155,6 +162,18 @@ export async function createSession(params: {
   let gitBranch: string | null = null;
   if (agentId === "claude") {
     if (createWorktreeFlag && branchName) {
+      // Pre-create branch from baseBranch if the branch doesn't exist yet
+      if (baseBranch && HAS_ISAAC) {
+        const branchExists = spawnSync(["git", "rev-parse", "--verify", branchName], {
+          cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+        }).exitCode === 0;
+        if (!branchExists) {
+          log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${branchName}" from "${baseBranch}"`);
+          spawnSync(["git", "branch", branchName, baseBranch], {
+            cwd: originalCwd, stdout: "pipe", stderr: "pipe",
+          });
+        }
+      }
       isaacFlags += ` --worktree --branch "${branchName}"`;
       gitBranch = branchName;
     }
@@ -280,8 +299,8 @@ export function restoreSessions() {
       continue;
     }
 
-    // Migrate old command format (handles "llm agent claude" with or without flags like --resume)
-    if (node.command.startsWith("llm agent claude")) {
+    // Migrate command format when isaac is available
+    if (HAS_ISAAC && node.command.startsWith("llm agent claude")) {
       const oldCommand = node.command;
       node.command = node.command.replace("llm agent claude", "isaac claude");
       log(`\x1b[38;5;141m[restore]\x1b[0m Migrated command for ${node.sessionId}: ${oldCommand} -> ${node.command}`);
