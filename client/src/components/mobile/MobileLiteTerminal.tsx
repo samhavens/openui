@@ -136,24 +136,27 @@ export function MobileLiteTerminal() {
         <pre className="whitespace-pre-wrap break-all">{output || "Loading…"}</pre>
       </div>
 
-      {/* Input */}
-      <div className="safe-bottom border-t border-zinc-800 bg-[#0f0f0f] px-3 py-2 flex gap-2">
+      {/* Input — form so iOS keyboard Return fires onSubmit reliably */}
+      <form
+        className="safe-bottom border-t border-zinc-800 bg-[#0f0f0f] px-3 py-2 flex gap-2"
+        onSubmit={e => { e.preventDefault(); handleSend(); }}
+      >
         <input
           type="text"
+          enterKeyHint="send"
           placeholder="Input…"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="flex-1 bg-zinc-800/60 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-zinc-500 focus:outline-none font-mono min-h-[44px]"
         />
         <button
-          onClick={handleSend}
+          type="submit"
           disabled={!input || sending}
           className="bg-white text-black rounded-xl w-11 flex items-center justify-center disabled:opacity-40 flex-shrink-0"
         >
           <Send className="w-4 h-4" />
         </button>
-      </div>
+      </form>
     </div>
   );
 }

@@ -196,24 +196,24 @@ export function MobileSessionDetail({ open, onClose, onOpenTerminal }: Props) {
           ))}
         </div>
 
-        {/* Input */}
-        <div className="flex gap-2 mb-4">
+        {/* Input — form so iOS keyboard Return fires onSubmit reliably */}
+        <form className="flex gap-2 mb-4" onSubmit={e => { e.preventDefault(); handleSend(); }}>
           <input
             type="text"
+            enterKeyHint="send"
             placeholder="Send a message…"
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             className="flex-1 bg-zinc-800/60 border border-zinc-700 rounded-xl px-3 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500 min-h-[44px]"
           />
           <button
-            onClick={handleSend}
+            type="submit"
             disabled={!input || sending}
             className="bg-white text-black rounded-xl w-11 flex items-center justify-center disabled:opacity-40 flex-shrink-0"
           >
             <Send className="w-4 h-4" />
           </button>
-        </div>
+        </form>
 
         {/* Notes */}
         <div className="mb-4">
