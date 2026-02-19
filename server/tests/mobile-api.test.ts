@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeAll, afterEach } from "bun:test";
 import { apiRoutes, buildRestartCommand } from "../routes/api";
-import { sessions, normalizeAgentCommand } from "../services/sessionManager";
+import { sessions, normalizeAgentCommand, buildPtyEnv } from "../services/sessionManager";
 import type { Session } from "../types";
 
 // --- Helpers ---
@@ -418,6 +418,64 @@ describe("buildRestartCommand", () => {
   it("returns command unchanged when no claudeSessionId", () => {
     const cmd = buildRestartCommand("claude --dangerously-skip-permissions", "claude", undefined, false);
     expect(cmd).toBe("claude --dangerously-skip-permissions");
+  });
+});
+
+// --- buildPtyEnv: PTY environment sanitization ---
+
+describe("buildPtyEnv", () => {
+  // Helper: temporarily set / restore a process.env key
+  function withEnv(key: string, value: string | undefined, fn: () => void) {
+    const original = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+    try { fn(); } finally {
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
+  }
+
+  it("strips CLAUDECODE so nested Claude Code sessions can launch", () => {
+    withEnv("CLAUDECODE", "1", () => {
+      const env = buildPtyEnv("test-session");
+      expect(env.CLAUDECODE).toBeUndefined();
+    });
+  });
+
+  it("strips CLAUDECODE regardless of its value", () => {
+    withEnv("CLAUDECODE", "some-session-id", () => {
+      const env = buildPtyEnv("test-session");
+      expect(env.CLAUDECODE).toBeUndefined();
+    });
+  });
+
+  it("strips CLAUDE_CODE_ENTRYPOINT", () => {
+    withEnv("CLAUDE_CODE_ENTRYPOINT", "cli", () => {
+      const env = buildPtyEnv("test-session");
+      expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    });
+  });
+
+  it("sets TERM to xterm-256color", () => {
+    const env = buildPtyEnv("test-session");
+    expect(env.TERM).toBe("xterm-256color");
+  });
+
+  it("sets OPENUI_SESSION_ID to the given session ID", () => {
+    const env = buildPtyEnv("my-session-abc");
+    expect(env.OPENUI_SESSION_ID).toBe("my-session-abc");
+  });
+
+  it("passes through PATH from process.env", () => {
+    const env = buildPtyEnv("x");
+    expect(env.PATH).toBe(process.env.PATH);
+  });
+
+  it("does not contain undefined values", () => {
+    const env = buildPtyEnv("x");
+    for (const v of Object.values(env)) {
+      expect(v).not.toBeUndefined();
+    }
   });
 });
 

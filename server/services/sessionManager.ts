@@ -111,6 +111,27 @@ export function getGitBranch(cwd: string): string | null {
 }
 
 
+// Env vars that must be stripped from the PTY child process.
+// Claude Code refuses to launch when CLAUDECODE is set (nested-session guard).
+// CLAUDE_CODE_ENTRYPOINT is another internal marker that should not be inherited.
+const PTY_STRIP_ENV_KEYS = new Set(["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"]);
+
+/**
+ * Build a clean environment for PTY child processes.
+ * Strips vars that would prevent Claude Code from launching inside this server.
+ */
+export function buildPtyEnv(sessionId: string): Record<string, string> {
+  const clean: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!PTY_STRIP_ENV_KEYS.has(k) && v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  clean.TERM = "xterm-256color";
+  clean.OPENUI_SESSION_ID = sessionId;
+  return clean;
+}
+
 export const MAX_BUFFER_SIZE = 1000;
 
 /** Broadcast a message to all WebSocket clients of a session, with try-catch per client */
@@ -214,11 +235,7 @@ export async function createSession(params: {
   const ptyProcess = spawnPty("/bin/bash", [], {
     name: "xterm-256color",
     cwd: originalCwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      OPENUI_SESSION_ID: sessionId,
-    },
+    env: buildPtyEnv(sessionId),
     rows: 30,
     cols: 120,
   });
@@ -385,11 +402,7 @@ export function autoResumeSessions() {
         const ptyProcess = spawnPty("/bin/bash", [], {
           name: "xterm-256color",
           cwd: session.cwd,
-          env: {
-            ...process.env,
-            TERM: "xterm-256color",
-            OPENUI_SESSION_ID: node.sessionId,
-          },
+          env: buildPtyEnv(node.sessionId),
           rows: 30,
           cols: 120,
         });
