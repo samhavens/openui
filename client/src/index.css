@@ -143,6 +143,20 @@ html, body {
   background: #444;
 }
 
+/* Safe area insets for iOS notch / dynamic island */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left { padding-left: env(safe-area-inset-left); }
+.safe-right { padding-right: env(safe-area-inset-right); }
+
+/* Prevent overscroll bounce on mobile */
+@media (max-width: 767px) {
+  html, body {
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
 /* Animations */
 @keyframes pulse-ring {
   0% {

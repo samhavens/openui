@@ -743,3 +743,13 @@ export function getClaudeProjects(): { dirName: string; originalPath: string }[]
 
   return results;
 }
+
+/** Return the on-disk path to the JSONL file for a given session, or null if unknown. */
+export function getSessionFilePath(sessionId: string): string | null {
+  ensureIndex();
+  const db = getDb();
+  const row = db
+    .prepare("SELECT full_path FROM conversations WHERE session_id = ?")
+    .get(sessionId) as { full_path: string } | null;
+  return row?.full_path || null;
+}

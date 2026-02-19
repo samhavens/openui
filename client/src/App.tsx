@@ -20,6 +20,8 @@ import { Header } from "./components/Header";
 import { CanvasControls } from "./components/CanvasControls";
 import { CanvasTabs } from "./components/CanvasTabs";
 import { AuthBanner } from "./components/AuthBanner";
+import { MobileApp } from "./components/mobile/MobileApp";
+import { useIsMobile } from "./hooks/useIsMobile";
 
 const nodeTypes = {
   agent: AgentNode,
@@ -49,7 +51,12 @@ function AppContent() {
     activeCanvasId,
     setCanvases,
     setActiveCanvasId,
+    isMobile,
+    forceDesktop,
   } = useStore();
+
+  // Initialize mobile viewport detection
+  useIsMobile();
 
   const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
   const reactFlowInstance = useReactFlow();
@@ -532,6 +539,11 @@ function AppContent() {
   }, [setSelectedNodeId, setSidebarOpen]);
 
   const isEmpty = nodes.length === 0;
+
+  // Route to mobile UI on small screens (unless user forces desktop)
+  if (isMobile && !forceDesktop) {
+    return <MobileApp />;
+  }
 
   return (
     <div className="w-screen h-screen bg-canvas overflow-hidden flex flex-col">
