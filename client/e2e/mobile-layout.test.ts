@@ -167,6 +167,30 @@ test.describe("mobile layout — elements must be within viewport", () => {
     await assertWithinViewport(page, yBtn, "macro 'y' button");
   });
 
+  test("detail sheet: archive/kill buttons reachable by scrolling (drag-intercepts-scroll regression)", async ({ page }) => {
+    // Root cause of Bug C: framer-motion `drag="y"` on the entire sheet div
+    // intercepts touch scroll events as sheet-dismiss drags. Downward scroll
+    // inside the sheet dismisses the sheet instead of scrolling content.
+    // Fix: restrict drag to the handle only via dragControls + dragListener=false.
+    await gotoMobileView(page, "detail");
+    await page.waitForTimeout(600);
+
+    // Programmatically scroll the sheet content to the bottom
+    const sheetScroll = page.locator(".overflow-y-auto").first();
+    await sheetScroll.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await page.waitForTimeout(300);
+
+    // Archive button must be reachable and within viewport
+    const archiveBtn = page.locator("button", { hasText: "Archive" });
+    await expect(archiveBtn).toBeVisible();
+    await assertWithinViewport(page, archiveBtn, "Archive button");
+
+    // Kill button too
+    const killBtn = page.locator("button", { hasText: "Kill" });
+    await expect(killBtn).toBeVisible();
+    await assertWithinViewport(page, killBtn, "Kill button");
+  });
+
   // ---------------------------------------------------------------------------
   // Regression: desktop view must not show mobile UI
   // ---------------------------------------------------------------------------
