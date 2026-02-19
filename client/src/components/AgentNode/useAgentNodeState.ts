@@ -108,7 +108,7 @@ export function useAgentNodeState(
       sessionId: data.sessionId,
       agentId: data.agentId || session?.agentId || "claude",
       agentName: data.agentName || session?.agentName || "Claude Code",
-      command: session?.command || "isaac claude",
+      command: session?.command || "claude",
       color: data.customColor || opts.color || session?.color || "#22C55E",
       createdAt: new Date().toISOString(),
       cwd: data.cwd || session?.cwd || "",

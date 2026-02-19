@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, normalizeAgentCommand } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, normalizeAgentCommand, DEFAULT_CLAUDE_COMMAND } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
+import { spawnSync } from "bun";
 import { join } from "path";
 import { homedir } from "os";
 import { existsSync, readFileSync, statSync } from "fs";
@@ -123,7 +124,7 @@ apiRoutes.get("/agents", (c) => {
     {
       id: "claude",
       name: "Claude Code",
-      command: "isaac claude",
+      command: DEFAULT_CLAUDE_COMMAND,
       description: "Anthropic's official CLI for Claude",
       color: "#F97316",
       icon: "sparkles",
@@ -269,6 +270,7 @@ apiRoutes.post("/sessions", async (c) => {
     ticketTitle,
     ticketUrl,
     branchName,
+    baseBranch,
     createWorktree: createWorktreeFlag,
     prNumber,
   } = body;
@@ -290,6 +292,7 @@ apiRoutes.post("/sessions", async (c) => {
       ticketTitle,
       ticketUrl,
       branchName,
+      baseBranch,
       createWorktreeFlag,
       prNumber,
       ticketPromptTemplate: undefined,
@@ -321,8 +324,8 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     // Restore archived session into the sessions Map
     const buffer = loadBuffer(sessionId);
 
-    // Migrate old command format (handles "llm agent claude" with or without flags)
-    const command = archivedNode.command.startsWith("llm agent claude")
+    // Migrate command format when isaac is available
+    const command = (DEFAULT_CLAUDE_COMMAND === "isaac claude" && archivedNode.command.startsWith("llm agent claude"))
       ? archivedNode.command.replace("llm agent claude", "isaac claude")
       : archivedNode.command;
 
@@ -455,6 +458,18 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";
   if (body.createWorktree && body.branchName) {
+    // Pre-create branch from baseBranch if it doesn't exist yet
+    if (body.baseBranch && DEFAULT_CLAUDE_COMMAND === "isaac claude") {
+      const branchExists = spawnSync(["git", "rev-parse", "--verify", body.branchName], {
+        cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+      }).exitCode === 0;
+      if (!branchExists) {
+        log(`\x1b[38;5;141m[git]\x1b[0m Creating branch "${body.branchName}" from "${body.baseBranch}"`);
+        spawnSync(["git", "branch", body.branchName, body.baseBranch], {
+          cwd: effectiveCwd, stdout: "pipe", stderr: "pipe",
+        });
+      }
+    }
     isaacFlags += ` --worktree --branch "${body.branchName}"`;
     gitBranch = body.branchName;
   }
