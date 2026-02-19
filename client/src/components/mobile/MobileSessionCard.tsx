@@ -32,15 +32,15 @@ export function MobileSessionCard({ session }: Props) {
 
   const openDetail = () => {
     setMobileSessionId(session.id);
-    setMobileView("detail");
-    history.pushState({ view: "detail", sessionId: session.id }, "");
+    setMobileView("terminal");
+    history.pushState({ view: "terminal", sessionId: session.id }, "");
   };
 
   const openRespond = (e: React.MouseEvent) => {
     e.stopPropagation();
     setMobileSessionId(session.id);
-    setMobileView("detail");
-    history.pushState({ view: "detail", sessionId: session.id }, "");
+    setMobileView("terminal");
+    history.pushState({ view: "terminal", sessionId: session.id }, "");
   };
 
   return (

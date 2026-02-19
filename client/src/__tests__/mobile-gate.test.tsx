@@ -118,7 +118,7 @@ describe("MobileDashboard filtering", () => {
 });
 
 describe("MobileSessionCard navigation", () => {
-  it("tapping card sets mobileView to detail and sets mobileSessionId", () => {
+  it("tapping card sets mobileView to terminal and sets mobileSessionId", () => {
     const session = makeSession({ customName: "Tappable" });
     useStore.setState({ sessions: new Map([[session.id, session]]) });
 
@@ -127,7 +127,7 @@ describe("MobileSessionCard navigation", () => {
     fireEvent.click(card);
 
     const state = useStore.getState();
-    expect(state.mobileView).toBe("detail");
+    expect(state.mobileView).toBe("terminal");
     expect(state.mobileSessionId).toBe(session.id);
   });
 
