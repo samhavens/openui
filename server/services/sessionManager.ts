@@ -8,6 +8,21 @@ import { loadBuffer } from "./persistence";
 import { enqueueSessionStart, signalSessionReady } from "./sessionStartQueue";
 
 const QUIET = !!process.env.OPENUI_QUIET;
+
+/**
+ * Normalize a stored agent command, replacing wrapper prefixes that require
+ * optional tools (isaac, llm) with bare `claude` when those tools are absent.
+ *
+ * @param command  - The stored command string (e.g. "isaac claude", "llm agent claude", "claude")
+ * @param agentId  - Agent type; only "claude" agents are normalized
+ * @param hasIsaac - Whether the `isaac` binary is available in PATH
+ */
+export function normalizeAgentCommand(command: string, agentId: string, hasIsaac: boolean): string {
+  if (agentId !== "claude" || hasIsaac) return command;
+  return command
+    .replace(/\bisaac claude\b/g, "claude")
+    .replace(/\bllm agent claude\b/g, "claude");
+}
 const log = QUIET ? () => {} : console.log.bind(console);
 const logError = QUIET ? () => {} : console.error.bind(console);
 
@@ -249,8 +264,12 @@ export async function createSession(params: {
     broadcastToSession(session, { type: "output", data });
   });
 
+  // Normalize: fall back to bare `claude` if `isaac` wrapper isn't installed
+  const hasIsaac = Bun.spawnSync(["which", "isaac"], { stderr: "ignore" }).exitCode === 0;
+  const normalizedCommand = normalizeAgentCommand(command, agentId, hasIsaac);
+
   // Run the command with plugin-dir and isaac flags
-  const finalCommand = injectPluginDir(command, agentId) + isaacFlags;
+  const finalCommand = injectPluginDir(normalizedCommand, agentId) + isaacFlags;
   log(`\x1b[38;5;82m[pty-write]\x1b[0m Writing command: ${finalCommand}`);
 
   setTimeout(() => {

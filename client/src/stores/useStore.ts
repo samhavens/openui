@@ -47,7 +47,7 @@ export interface AgentSession {
   archived?: boolean;
 }
 
-interface AppState {
+export interface AppState {
   // Config
   launchCwd: string;
   setLaunchCwd: (cwd: string) => void;
@@ -109,6 +109,20 @@ interface AppState {
   authUrl: string | null;
   setAuthRequired: (url: string) => void;
   clearAuthRequired: () => void;
+
+  // Mobile navigation
+  isMobile: boolean;
+  setIsMobile: (v: boolean) => void;
+  forceDesktop: boolean;
+  setForceDesktop: (v: boolean) => void;
+  mobileView: 'dashboard' | 'detail' | 'terminal';
+  setMobileView: (view: 'dashboard' | 'detail' | 'terminal') => void;
+  mobileSessionId: string | null;
+  setMobileSessionId: (id: string | null) => void;
+  mobileStatusFilter: 'all' | 'waiting_input' | 'running' | 'idle' | 'error';
+  setMobileStatusFilter: (f: 'all' | 'waiting_input' | 'running' | 'idle' | 'error') => void;
+  mobileSearchQuery: string;
+  setMobileSearchQuery: (q: string) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -284,6 +298,20 @@ export const useStore = create<AppState>((set) => ({
   authUrl: null,
   setAuthRequired: (url) => set({ authRequired: true, authUrl: url }),
   clearAuthRequired: () => set({ authRequired: false, authUrl: null }),
+
+  // Mobile navigation
+  isMobile: false,
+  setIsMobile: (v) => set({ isMobile: v }),
+  forceDesktop: false,  // session-only: refresh resets to mobile detection
+  setForceDesktop: (v) => set({ forceDesktop: v }),
+  mobileView: 'dashboard',
+  setMobileView: (view) => set({ mobileView: view }),
+  mobileSessionId: null,
+  setMobileSessionId: (id) => set({ mobileSessionId: id }),
+  mobileStatusFilter: 'all',
+  setMobileStatusFilter: (f) => set({ mobileStatusFilter: f }),
+  mobileSearchQuery: '',
+  setMobileSearchQuery: (q) => set({ mobileSearchQuery: q }),
 
   loadState: async () => {
     const showArchived = useStore.getState().showArchived;

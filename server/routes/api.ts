@@ -1,14 +1,52 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, normalizeAgentCommand } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { spawnSync } from "bun";
 import { join } from "path";
 import { homedir } from "os";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 
 const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
+
+/**
+ * Build the shell command to run when restarting a session.
+ *
+ * @param storedCommand  - The command persisted on the session (may use "isaac claude" or "llm agent claude")
+ * @param agentId        - Agent type (e.g. "claude")
+ * @param claudeSessionId - Optional Claude session UUID to --resume
+ * @param hasIsaac       - Whether the "isaac" binary is available in PATH
+ * @returns Final shell command string ready to write to the PTY
+ */
+export function buildRestartCommand(
+  storedCommand: string,
+  agentId: string,
+  claudeSessionId: string | undefined,
+  hasIsaac: boolean,
+): string {
+  const normalized = normalizeAgentCommand(storedCommand, agentId, hasIsaac);
+
+  let cmd = normalized;
+
+  // Inject --resume for Claude sessions with a known session UUID
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (agentId === "claude" && claudeSessionId && UUID_RE.test(claudeSessionId)) {
+    // Remove any stale --resume flags first
+    cmd = cmd.replace(/--resume\s+[\w-]+/g, "").replace(/--resume(?=\s|$)/g, "").trim();
+
+    const resumeArg = `--resume ${claudeSessionId}`;
+    if (cmd.includes("isaac claude")) {
+      cmd = cmd.replace("isaac claude", `isaac claude ${resumeArg}`);
+    } else if (cmd.includes("llm agent claude")) {
+      cmd = cmd.replace("llm agent claude", `llm agent claude ${resumeArg}`);
+    } else if (cmd.startsWith("claude")) {
+      cmd = cmd.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);
+    }
+  }
+
+  return cmd;
+}
 const QUIET = !!process.env.OPENUI_QUIET;
 const log = QUIET ? () => {} : console.log.bind(console);
 const logError = QUIET ? () => {} : console.error.bind(console);
@@ -360,24 +398,18 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       broadcastToSession(session, { type: "output", data });
     });
 
-    // Build the command with resume flag if we have a Claude session ID
-    let finalCommand = injectPluginDir(session.command, session.agentId);
+    // Build the command, falling back to bare `claude` if `isaac` isn't installed
+    const hasIsaac = Bun.spawnSync(["which", "isaac"], { stderr: "ignore" }).exitCode === 0;
+    const builtCommand = buildRestartCommand(
+      session.command,
+      session.agentId,
+      session.claudeSessionId,
+      hasIsaac,
+    );
+    let finalCommand = injectPluginDir(builtCommand, session.agentId);
 
-    // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
-    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
-      // Remove any existing --resume flags first
-      finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
-
-      const resumeArg = `--resume ${session.claudeSessionId}`;
-      if (finalCommand.includes("isaac claude")) {
-        finalCommand = finalCommand.replace("isaac claude", `isaac claude ${resumeArg}`);
-      } else if (finalCommand.includes("llm agent claude")) {
-        finalCommand = finalCommand.replace("llm agent claude", `llm agent claude ${resumeArg}`);
-      } else if (finalCommand.startsWith("claude")) {
-        finalCommand = finalCommand.replace(/^claude(\s|$)/, `claude ${resumeArg}$1`);
-      }
-      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId}`);
+    if (session.claudeSessionId) {
+      log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId} (isaac=${hasIsaac})`);
     }
 
     setTimeout(() => {
@@ -924,6 +956,7 @@ import {
 import {
   searchConversations,
   getClaudeProjects,
+  getSessionFilePath,
 } from "../services/conversationIndex";
 
 // Get issues from a GitHub repo (no auth needed for public repos)
@@ -1025,6 +1058,355 @@ apiRoutes.get("/claude/projects", (c) => {
   } catch (e: any) {
     return c.json({ error: e.message }, 500);
   }
+});
+
+// ============ Mobile API: Session Context Summary ============
+
+// Cache: sessionId → { text, mtime } — avoids re-calling Haiku when session file unchanged
+const contextSummaryCache = new Map<string, { text: string; mtime: number }>();
+
+/**
+ * GET /api/claude/conversations/:sessionId/context
+ *
+ * Reads the last few real turns from the session JSONL, calls Haiku to produce
+ * a 2-3 sentence "what was this session doing" summary, and caches by file mtime.
+ */
+apiRoutes.get("/claude/conversations/:sessionId/context", async (c) => {
+  const sessionId = c.req.param("sessionId");
+
+  const filePath = getSessionFilePath(sessionId);
+  if (!filePath || !existsSync(filePath)) {
+    return c.json({ summary: "" });
+  }
+
+  const mtime = statSync(filePath).mtimeMs;
+  const cached = contextSummaryCache.get(sessionId);
+  if (cached && cached.mtime === mtime) {
+    return c.json({ summary: cached.text });
+  }
+
+  // Read JSONL and extract last 6 real user/assistant turns (skip tool noise)
+  const lines = readFileSync(filePath, "utf-8").split("\n").filter((l) => l.trim());
+  const turns: string[] = [];
+
+  for (let i = lines.length - 1; i >= 0 && turns.length < 6; i--) {
+    try {
+      const obj = JSON.parse(lines[i]);
+      const role: string = obj.type === "user" ? "user" : obj.type === "assistant" ? "assistant" : "";
+      if (!role) continue;
+
+      const raw = obj.message?.content ?? obj.content;
+      let text = "";
+      if (typeof raw === "string") {
+        text = raw;
+      } else if (Array.isArray(raw)) {
+        // Prefer text blocks; skip purely tool-use messages
+        for (const part of raw) {
+          if (part?.type === "text" && typeof part.text === "string") {
+            text = part.text;
+            break;
+          }
+        }
+      }
+
+      if (!text || text.trim().length < 10) continue;
+      // Skip lines that are pure hook/system noise
+      if (/^\[(?:Request interrupted|system:|hook)/i.test(text.trim())) continue;
+
+      turns.unshift(`${role.toUpperCase()}: ${text.trim().slice(0, 500)}`);
+    } catch { /* malformed line */ }
+  }
+
+  if (!turns.length) {
+    return c.json({ summary: "" });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    // No API key — return raw last turn as fallback
+    const fallback = turns[turns.length - 1].replace(/^(?:USER|ASSISTANT): /, "");
+    return c.json({ summary: fallback.slice(0, 200) });
+  }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 120,
+        messages: [{
+          role: "user",
+          content: `Here are the last few turns of a Claude Code session:\n\n${turns.join("\n\n")}\n\nIn 2-3 concrete sentences, what was this session working on most recently? Focus on the last exchange. No preamble.`,
+        }],
+      }),
+    });
+
+    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
+    const data = await res.json() as any;
+    const text: string = data.content?.[0]?.text?.trim() ?? "";
+
+    contextSummaryCache.set(sessionId, { text, mtime });
+    return c.json({ summary: text });
+  } catch (e: any) {
+    log(`[context] Haiku call failed for ${sessionId}: ${e.message}`);
+    const fallback = turns[turns.length - 1].replace(/^(?:USER|ASSISTANT): /, "").slice(0, 200);
+    return c.json({ summary: fallback });
+  }
+});
+
+// ============ Mobile API: Tail + Input ============
+
+// djb2 hash for cheap poll-diffing
+function djb2(str: string): number {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash >>> 0;
+}
+
+/**
+ * Strip ANSI/VT100 sequences and produce readable plain text for mobile display.
+ *
+ * Passes:
+ * 1. Replace cursor-positioning/movement sequences: cursor-home→\n, cursor-up→strip,
+ *    cursor-forward (ESC[NC)→spaces, cursor-to-column (ESC[NG)→space
+ * 2. Strip all remaining escape sequences (OSC, CSI, DEC modes, etc.)
+ * 3. Simulate \r overwriting line-by-line (status bar redraws)
+ * 4. Collapse spinner animation lines (cursor-up frame spam)
+ * 5. Deduplicate consecutive identical lines (TUI double-draws)
+ * 6. Remove single-char cursor-position artifact lines (char-by-char TUI draws)
+ * 7. Deduplicate repeated multi-line blocks (PTY restart artifacts)
+ * 8. Collapse 3+ blank lines → 2
+ */
+// eslint-disable-next-line no-control-regex
+function stripAnsi(str: string): string {
+  let s = str;
+
+  // --- Pass 1: cursor-movement sequences ---
+  // Cursor-home / cursor-position → newline (new TUI frame boundary)
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/\x1B\[\d*(?:;\d*)?\s*[Hf]/g, "\n");
+  // Cursor-up (ESC[NA) → signals overwrite of previous N lines.
+  // We can't truly simulate this without a screen buffer, so strip them.
+  // The spinner collapse in pass 5 cleans up the resulting duplicate lines.
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/\x1B\[\d*A/g, "");
+  // Cursor-forward (ESC[NC) → N spaces; preserves word spacing in TUI layouts.
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/\x1B\[(\d+)C/g, (_, n) => " ".repeat(Math.min(parseInt(n, 10), 200)));
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/\x1B\[C/g, " ");
+  // Cursor-to-column (ESC[NG, CHA) → single space; approximates horizontal gap.
+  // eslint-disable-next-line no-control-regex
+  s = s.replace(/\x1B\[\d*G/g, " ");
+
+  // --- Pass 2: strip all escape sequences ---
+  s = s
+    // OSC: ESC ] ... BEL  or  ESC ] ... ESC \
+    .replace(/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\)/g, "")
+    // CSI: ESC [ <param 0x30-0x3F>* <intermediate 0x20-0x2F>* <final 0x40-0x7E>
+    .replace(/\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, "")
+    // Other two-byte ESC sequences
+    .replace(/\x1B[^\[]/g, "")
+    // Lone ESC
+    .replace(/\x1B/g, "")
+    // NUL bytes
+    .replace(/\x00/g, "");
+
+  // --- Pass 3: simulate \r overwriting within each \n-delimited line ---
+  s = s
+    .split("\n")
+    .map((line) => {
+      if (!line.includes("\r")) return line;
+      const parts = line.split("\r");
+      let result = "";
+      for (const part of parts) {
+        if (part.length >= result.length) {
+          result = part;
+        } else {
+          result = part + result.slice(part.length);
+        }
+      }
+      return result;
+    })
+    .join("\n");
+
+  // --- Pass 4: collapse spinner animation lines ---
+  // Cursor-up based spinners (e.g. Claude Code's "*(thinking)") leave one frame per line.
+  // A "spinner line" is a line whose only non-space content is a spinner char + optional label.
+  // Collapse consecutive spinner lines → keep only the last frame.
+  {
+    // Matches: optional leading spaces/spinner-chars, then the label, then trailing spaces.
+    // Spinner chars: * ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ | / - \
+    const SPINNER_LINE = /^[\s*⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-]*\S[\s*⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-]*$/;
+    // More targeted: lines that are ONLY a thinking indicator
+    const THINKING = /^[\s*⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/\\-]*\(thinking\)\s*$/;
+    const spinnerLines = s.split("\n");
+    const collapsed: string[] = [];
+    for (const line of spinnerLines) {
+      const t = line.trimEnd();
+      if (THINKING.test(t)) {
+        // Replace the last thinking line instead of appending a new one
+        if (collapsed.length > 0 && THINKING.test(collapsed[collapsed.length - 1].trimEnd())) {
+          collapsed[collapsed.length - 1] = t;
+        } else {
+          collapsed.push(t);
+        }
+      } else {
+        collapsed.push(t);
+      }
+    }
+    s = collapsed.join("\n");
+  }
+
+  // --- Pass 5: deduplicate consecutive identical non-empty lines ---
+  {
+    const lines = s.split("\n");
+    const deduped: string[] = [];
+    for (const line of lines) {
+      const t = line.trimEnd();
+      if (t.length > 0 && deduped.length > 0 && deduped[deduped.length - 1] === t) {
+        continue;
+      }
+      deduped.push(t);
+    }
+    s = deduped.join("\n");
+  }
+
+  // --- Pass 6: remove single-char cursor-position artifact lines ---
+  // When a TUI draws characters one-at-a-time with absolute cursor positioning,
+  // cursor-home → \n conversion leaves each character on its own line.
+  // Remove runs of 4+ consecutive lines that are each ≤ 2 printable chars —
+  // these are unreadable positioning artifacts, not real content.
+  {
+    const ARTIFACT_MAX_LEN = 2;
+    const MIN_RUN = 4;
+    const lines = s.split("\n");
+    const result: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+      const t = lines[i].trim();
+      if (t.length > 0 && t.length <= ARTIFACT_MAX_LEN) {
+        // Look ahead to see if this is a run of short lines
+        let runEnd = i + 1;
+        while (runEnd < lines.length) {
+          const next = lines[runEnd].trim();
+          if (next.length > 0 && next.length <= ARTIFACT_MAX_LEN) runEnd++;
+          else break;
+        }
+        if (runEnd - i >= MIN_RUN) {
+          i = runEnd; // skip the whole artifact run
+          continue;
+        }
+      }
+      result.push(lines[i]);
+      i++;
+    }
+    s = result.join("\n");
+  }
+
+  // --- Pass 8: deduplicate repeated multi-line blocks ---
+  // When a PTY session restarts, the shell startup sequence appears twice in the buffer.
+  // Detect blocks of 4+ identical consecutive lines and remove the earlier copy.
+  {
+    const BLOCK_SIZE = 5; // min lines to consider a "block"
+    const lines = s.split("\n");
+    if (lines.length >= BLOCK_SIZE * 2) {
+      // Build a rolling fingerprint: join every BLOCK_SIZE-line window
+      const result: string[] = [...lines];
+      let i = result.length - BLOCK_SIZE;
+      while (i >= BLOCK_SIZE) {
+        const block = result.slice(i, i + BLOCK_SIZE).join("\n");
+        // Search for an earlier occurrence
+        const earlier = result.slice(0, i).join("\n");
+        if (earlier.includes(block)) {
+          // Remove this block (it's a duplicate of an earlier one)
+          result.splice(i, BLOCK_SIZE);
+          i = Math.max(0, i - BLOCK_SIZE);
+        } else {
+          i--;
+        }
+      }
+      s = result.join("\n");
+    }
+  }
+
+  // --- Pass 9: collapse 3+ consecutive blank lines → 2 ---
+  s = s.replace(/\n{3,}/g, "\n\n");
+
+  return s;
+}
+
+// GET /api/sessions/:sessionId/tail
+// Returns the tail of the session's output buffer.
+// ?bytes=N (default 16384, max 65536) — max bytes to return
+// ?strip=1 — strip ANSI escape codes
+apiRoutes.get("/sessions/:sessionId/tail", (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const maxBytes = Math.min(
+    parseInt(c.req.query("bytes") || "16384", 10),
+    65536
+  );
+  const strip = c.req.query("strip") === "1";
+
+  // Walk backward through outputBuffer accumulating up to maxBytes
+  let tail = "";
+  let bytes = 0;
+  for (let i = session.outputBuffer.length - 1; i >= 0; i--) {
+    const chunk = session.outputBuffer[i];
+    if (bytes + chunk.length > maxBytes) {
+      const remaining = maxBytes - bytes;
+      if (remaining > 0) {
+        tail = chunk.slice(-remaining) + tail;
+      }
+      break;
+    }
+    tail = chunk + tail;
+    bytes += chunk.length;
+  }
+
+  if (strip) {
+    tail = stripAnsi(tail);
+  }
+
+  return c.json({
+    tail,
+    tail_hash: djb2(tail),
+    bytes: tail.length,
+    status: session.status,
+  });
+});
+
+// POST /api/sessions/:sessionId/input
+// Writes data to the session's PTY.
+// Body: { data: string } — max 4096 chars
+apiRoutes.post("/sessions/:sessionId/input", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+  if (!session.pty) return c.json({ error: "No active PTY" }, 400);
+
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.data !== "string") {
+    return c.json({ error: "data field required" }, 400);
+  }
+  if (body.data.length > 4096) {
+    return c.json({ error: "data too long (max 4096 chars)" }, 400);
+  }
+
+  session.pty.write(body.data);
+  session.lastInputTime = Date.now();
+  return c.json({ success: true });
 });
 
 // ============ Config (Settings) ============

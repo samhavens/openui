@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
 import type { ServerWebSocket } from "bun";
 import { apiRoutes } from "./routes/api";
+import { tokenAuth } from "./middleware/auth";
 import { sessions, restoreSessions, autoResumeSessions } from "./services/sessionManager";
 import { saveState, migrateStateToHome } from "./services/persistence";
 import { setAuthBroadcast } from "./services/sessionStartQueue";
@@ -17,6 +18,7 @@ const log = QUIET ? () => {} : console.log.bind(console);
 
 // Middleware
 app.use("*", cors());
+app.use("/api/*", tokenAuth);
 
 // API Routes
 app.route("/api", apiRoutes);
@@ -41,12 +43,20 @@ restoreSessions();
 // WebSocket server
 Bun.serve<WebSocketData>({
   port: PORT,
+  hostname: "0.0.0.0",
   fetch(req, server) {
     const url = new URL(req.url);
 
     if (url.pathname === "/ws") {
       const sessionId = url.searchParams.get("sessionId");
       if (!sessionId) return new Response("Session ID required", { status: 400 });
+
+      // WS can't send headers, so auth token goes in query param
+      const wsToken = process.env.OPENUI_TOKEN;
+      if (wsToken) {
+        const provided = url.searchParams.get("token");
+        if (provided !== wsToken) return new Response("Unauthorized", { status: 401 });
+      }
 
       const session = sessions.get(sessionId);
       if (!session) return new Response("Session not found", { status: 404 });
