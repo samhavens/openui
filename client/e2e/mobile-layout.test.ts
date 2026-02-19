@@ -167,6 +167,23 @@ test.describe("mobile layout — elements must be within viewport", () => {
     await assertWithinViewport(page, yBtn, "macro 'y' button");
   });
 
+  test("detail sheet: archive/kill buttons visible without scrolling (snap height regression)", async ({ page }) => {
+    // Root cause of Bug D: default snap point was 60% height. Content (~560px)
+    // didn't fit — Notes barely visible, Archive/Kill below the fold. Fixed by
+    // opening at 95% snap by default.
+    await gotoMobileView(page, "detail");
+    await page.waitForTimeout(600);
+
+    // No scrolling — buttons must be immediately visible at initial open
+    const archiveBtn = page.locator("button", { hasText: "Archive" });
+    await expect(archiveBtn).toBeVisible();
+    await assertWithinViewport(page, archiveBtn, "Archive button (no scroll)");
+
+    const killBtn = page.locator("button", { hasText: "Kill" });
+    await expect(killBtn).toBeVisible();
+    await assertWithinViewport(page, killBtn, "Kill button (no scroll)");
+  });
+
   test("detail sheet: archive/kill buttons reachable by scrolling (drag-intercepts-scroll regression)", async ({ page }) => {
     // Root cause of Bug C: framer-motion `drag="y"` on the entire sheet div
     // intercepts touch scroll events as sheet-dismiss drags. Downward scroll

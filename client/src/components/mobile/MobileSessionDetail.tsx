@@ -134,8 +134,8 @@ export function MobileSessionDetail({ open, onClose, onOpenTerminal }: Props) {
     <BottomSheet
       open={open}
       onClose={onClose}
-      snapPoints={[0.08, 0.6, 0.95]}
-      initialSnap={session.status === "waiting_input" ? 2 : 1}
+      snapPoints={[0.08, 0.95]}
+      initialSnap={1}
     >
       <div className="px-4 pb-8">
         {/* Session header */}
