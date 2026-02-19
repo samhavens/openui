@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { motion, AnimatePresence, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, AnimatePresence, useMotionValue, useTransform, animate, useDragControls } from "framer-motion";
 
 interface Props {
   open: boolean;
@@ -13,6 +13,7 @@ interface Props {
 
 export function BottomSheet({ open, onClose, snapPoints = [0.5, 0.92], initialSnap = 0, children }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const dragControls = useDragControls();
   const y = useMotionValue(0);
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
 
@@ -61,15 +62,20 @@ export function BottomSheet({ open, onClose, snapPoints = [0.5, 0.92], initialSn
             className="fixed left-0 right-0 bottom-0 z-50 bg-[#141414] rounded-t-2xl shadow-2xl flex flex-col"
             style={{ y, top: 0 }}
             drag="y"
+            dragControls={dragControls}
+            dragListener={false}
             dragConstraints={{ top: snaps[0], bottom: vh }}
             dragElastic={0.1}
             onDragEnd={handleDragEnd}
           >
-            {/* Drag handle */}
-            <div className="flex-none flex justify-center pt-3 pb-1">
+            {/* Drag handle — only this area initiates the drag, so content scrolls freely */}
+            <div
+              className="flex-none flex justify-center pt-3 pb-2 cursor-grab active:cursor-grabbing touch-none"
+              onPointerDown={(e) => dragControls.start(e)}
+            >
               <div className="w-10 h-1 rounded-full bg-zinc-600" />
             </div>
-            {/* flex-1 + pb-safe: evaluated in CSS (not inline JS calc), reliably clears home indicator */}
+            {/* flex-1 + pb-safe: evaluated in CSS, reliably clears home indicator */}
             <div className="flex-1 overflow-y-auto min-h-0 pb-safe">
               {children}
             </div>

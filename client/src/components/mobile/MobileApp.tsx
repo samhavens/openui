@@ -36,7 +36,7 @@ export function MobileApp() {
   const session = mobileSessionId ? sessions.get(mobileSessionId) : null;
 
   return (
-    <div className="flex flex-col h-screen bg-[#0f0f0f] overflow-hidden">
+    <div className="flex flex-col h-dvh bg-[#0f0f0f] overflow-hidden">
       {mobileView !== "terminal" && <MobileHeader onCreateOpen={() => setShowCreate(true)} />}
 
       {/* Dashboard is always mounted; detail/terminal overlay */}
