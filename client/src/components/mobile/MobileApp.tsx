@@ -45,8 +45,8 @@ export function MobileApp() {
       {/* Full-screen terminal */}
       {mobileView === "terminal" && (
         <div className="flex flex-col h-full">
-          {/* Minimal terminal header */}
-          <div className="safe-top bg-[#0f0f0f] border-b border-zinc-800 px-4 py-2 flex items-center gap-2">
+          {/* Minimal terminal header — flex-none so it doesn't stretch */}
+          <div className="flex-none safe-top bg-[#0f0f0f] border-b border-zinc-800 px-4 py-2 flex items-center gap-2">
             <button
               className="text-zinc-400 text-lg leading-none"
               onClick={() => {
@@ -60,7 +60,10 @@ export function MobileApp() {
               {session ? (session.customName || session.agentName) : "Terminal"}
             </span>
           </div>
-          <MobileLiteTerminal />
+          {/* flex-1 min-h-0: constrains MobileLiteTerminal to remaining height, not full 100vh */}
+          <div className="flex-1 min-h-0">
+            <MobileLiteTerminal />
+          </div>
         </div>
       )}
 

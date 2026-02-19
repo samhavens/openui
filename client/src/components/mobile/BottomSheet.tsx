@@ -58,7 +58,7 @@ export function BottomSheet({ open, onClose, snapPoints = [0.5, 0.92], initialSn
           {/* Sheet */}
           <motion.div
             ref={sheetRef}
-            className="fixed left-0 right-0 bottom-0 z-50 bg-[#141414] rounded-t-2xl shadow-2xl"
+            className="fixed left-0 right-0 bottom-0 z-50 bg-[#141414] rounded-t-2xl shadow-2xl flex flex-col"
             style={{ y, top: 0 }}
             drag="y"
             dragConstraints={{ top: snaps[0], bottom: vh }}
@@ -66,14 +66,11 @@ export function BottomSheet({ open, onClose, snapPoints = [0.5, 0.92], initialSn
             onDragEnd={handleDragEnd}
           >
             {/* Drag handle */}
-            <div className="flex justify-center pt-3 pb-1">
+            <div className="flex-none flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 rounded-full bg-zinc-600" />
             </div>
-            {/* maxHeight = space from handle to bottom, minus iOS home indicator safe area */}
-            <div
-              className="overflow-y-auto"
-              style={{ maxHeight: `calc(${vh - snaps[snaps.length - 1] - 40}px - env(safe-area-inset-bottom))` }}
-            >
+            {/* flex-1 + pb-safe: evaluated in CSS (not inline JS calc), reliably clears home indicator */}
+            <div className="flex-1 overflow-y-auto min-h-0 pb-safe">
               {children}
             </div>
           </motion.div>
