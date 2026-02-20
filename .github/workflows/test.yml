@@ -20,8 +20,15 @@ jobs:
 
       - run: bun install
 
-      - name: Run server tests with coverage
-        run: bun test --coverage server/tests/
+      - name: Run server tests (mock-isolated file, separate process)
+        run: bun test --coverage server/tests/routes-coverage.test.ts
+
+      - name: Run remaining server tests with coverage
+        run: |
+          # routes-coverage.test.ts uses mock.module() which poisons the
+          # process-wide module cache in Bun, so it runs in its own step above.
+          files=$(ls server/tests/*.test.ts | grep -v routes-coverage)
+          bun test --coverage $files
 
   client-unit:
     runs-on: ubuntu-latest
