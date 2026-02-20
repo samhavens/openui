@@ -651,7 +651,7 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
-  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason } = body;
+  const { status, openuiSessionId, claudeSessionId, cwd, hookEvent, toolName, stopReason, toolInput } = body;
 
   // Log the full raw payload for debugging
   log(`\x1b[38;5;82m[plugin-hook]\x1b[0m ${hookEvent || 'unknown'}: status=${status} tool=${toolName || 'none'} openui=${openuiSessionId || 'none'}`);
@@ -715,6 +715,7 @@ apiRoutes.post("/status-update", async (c) => {
         effectiveStatus = "waiting_input";
         session.needsInputSince = Date.now();
         session.currentTool = toolName;
+        session.toolInput = toolInput;
         if (session.permissionTimeout) {
           clearTimeout(session.permissionTimeout);
           session.permissionTimeout = undefined;
@@ -780,6 +781,7 @@ apiRoutes.post("/status-update", async (c) => {
       if (toolName === "AskUserQuestion") {
         session.needsInputSince = undefined;
       }
+      session.toolInput = undefined;
       session.preToolTime = undefined;
       if (session.permissionTimeout) {
         clearTimeout(session.permissionTimeout);
@@ -1386,6 +1388,8 @@ apiRoutes.get("/sessions/:sessionId/tail", (c) => {
     tail_hash: djb2(tail),
     bytes: tail.length,
     status: session.status,
+    ...(session.currentTool && { currentTool: session.currentTool }),
+    ...(session.toolInput && { toolInput: session.toolInput }),
   });
 });
 
