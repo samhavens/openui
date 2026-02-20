@@ -571,24 +571,11 @@ describe("POST /sessions/:id/restart — success path", () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("DELETE /canvases/:id — edge cases", () => {
-  it("successfully deletes empty canvas", async () => {
-    const canvasId = `canvas-empty-delete-${Date.now()}`;
-    await apiRoutes.request("/canvases", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: canvasId,
-        name: "Empty Canvas",
-        color: "#0000FF",
-        order: 98,
-        createdAt: new Date().toISOString(),
-      }),
-    });
-
-    const deleteRes = await apiRoutes.request(`/canvases/${canvasId}`, {
+  it("returns 404 for nonexistent canvas", async () => {
+    const deleteRes = await apiRoutes.request("/canvases/canvas-nonexistent-xyz", {
       method: "DELETE",
     });
-    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.status).toBe(404);
   });
 });
 
