@@ -479,6 +479,114 @@ describe("buildPtyEnv", () => {
   });
 });
 
+// --- AskUserQuestion toolInput pipeline ---
+// These tests verify that when Claude Code fires the AskUserQuestion tool,
+// the toolInput (containing questions/options) flows through the server
+// and becomes available to clients via the /tail endpoint.
+
+const ASK_TOOL_INPUT = {
+  questions: [{
+    question: "Which approach?",
+    header: "Approach",
+    options: [
+      { label: "Option A", description: "First option" },
+      { label: "Option B", description: "Second option" },
+    ],
+    multiSelect: false,
+  }],
+};
+
+describe("POST /status-update stores toolInput on session", () => {
+  it("stores toolInput when AskUserQuestion pre_tool fires", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.status = "running";
+
+    await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "pre_tool",
+        openuiSessionId: TEST_SESSION_ID,
+        toolName: "AskUserQuestion",
+        hookEvent: "PreToolUse",
+        toolInput: ASK_TOOL_INPUT,
+      }),
+    });
+
+    expect(session.toolInput).toEqual(ASK_TOOL_INPUT);
+  });
+
+  it("clears toolInput on post_tool", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.status = "waiting_input";
+    session.currentTool = "AskUserQuestion";
+    // Manually set toolInput to simulate prior state
+    (session as any).toolInput = ASK_TOOL_INPUT;
+
+    await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "post_tool",
+        openuiSessionId: TEST_SESSION_ID,
+        toolName: "AskUserQuestion",
+        hookEvent: "PostToolUse",
+      }),
+    });
+
+    expect((session as any).toolInput).toBeUndefined();
+  });
+
+  it("does NOT store toolInput for non-AskUserQuestion tools", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.status = "running";
+    (session as any).toolInput = undefined;
+
+    await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "pre_tool",
+        openuiSessionId: TEST_SESSION_ID,
+        toolName: "Bash",
+        hookEvent: "PreToolUse",
+        toolInput: { command: "ls" },
+      }),
+    });
+
+    expect((session as any).toolInput).toBeUndefined();
+  });
+});
+
+describe("GET /sessions/:id/tail includes toolInput and currentTool", () => {
+  it("returns currentTool and toolInput when set on session", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.status = "waiting_input";
+    session.currentTool = "AskUserQuestion";
+    (session as any).toolInput = ASK_TOOL_INPUT;
+    session.outputBuffer = ["some output"];
+
+    const res = await apiRoutes.request(`/sessions/${TEST_SESSION_ID}/tail`);
+    const body = await res.json();
+
+    expect(body.currentTool).toBe("AskUserQuestion");
+    expect(body.toolInput).toEqual(ASK_TOOL_INPUT);
+  });
+
+  it("omits toolInput when not set on session", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.status = "idle";
+    session.currentTool = undefined;
+    (session as any).toolInput = undefined;
+    session.outputBuffer = ["some output"];
+
+    const res = await apiRoutes.request(`/sessions/${TEST_SESSION_ID}/tail`);
+    const body = await res.json();
+
+    expect(body.toolInput).toBeUndefined();
+  });
+});
+
 // --- Auth middleware (tested via env var) ---
 
 describe("tokenAuth middleware (integration via env)", () => {

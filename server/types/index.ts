@@ -37,6 +37,8 @@ export interface Session {
   claudeSessionId?: string;
   // Current tool being used (from plugin)
   currentTool?: string;
+  // Tool input payload (e.g. AskUserQuestion questions/options)
+  toolInput?: any;
   // Last hook event received
   lastHookEvent?: string;
   // Permission detection

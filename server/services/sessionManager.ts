@@ -178,7 +178,7 @@ export async function createSession(params: {
     agentId,
     agentName,
     command,
-    cwd: originalCwd,
+    cwd: rawCwd,
     nodeId,
     customName,
     customColor,
@@ -190,6 +190,13 @@ export async function createSession(params: {
     prNumber,
     ticketPromptTemplate,
   } = params;
+
+  // Expand ~ to actual home directory (OS chdir doesn't expand shell tildes)
+  const originalCwd = rawCwd.startsWith("~/")
+    ? join(homedir(), rawCwd.slice(2))
+    : rawCwd === "~"
+      ? homedir()
+      : rawCwd;
 
   // Build isaac flags for worktree/branch/PR
   let isaacFlags = "";
@@ -343,14 +350,20 @@ export function restoreSessions() {
     console.log(`[restore] Loading session: ${node.sessionId} (${node.customName}) archived=${node.archived}`);
 
     const buffer = loadBuffer(node.sessionId);
-    const gitBranch = getGitBranch(node.cwd);
+    // Expand ~ for sessions persisted before tilde expansion was added
+    const resolvedCwd = node.cwd.startsWith("~/")
+      ? join(homedir(), node.cwd.slice(2))
+      : node.cwd === "~"
+        ? homedir()
+        : node.cwd;
+    const gitBranch = getGitBranch(resolvedCwd);
 
     const session: Session = {
       pty: null,
       agentId: node.agentId,
       agentName: node.agentName,
       command: node.command,
-      cwd: node.cwd,
+      cwd: resolvedCwd,
       gitBranch: gitBranch || node.gitBranch || undefined,
       createdAt: node.createdAt,
       clients: new Set(),
