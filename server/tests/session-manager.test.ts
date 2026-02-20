@@ -38,7 +38,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 describe("getGitBranch", () => {
   it("returns branch name for a git repo", () => {
     // openui-cicd is a git repo
-    const branch = getGitBranch("/Users/sam.havens/sh/repos/openui-cicd");
+    const branch = getGitBranch(process.cwd());
     expect(branch).toBeTruthy();
     expect(typeof branch).toBe("string");
   });

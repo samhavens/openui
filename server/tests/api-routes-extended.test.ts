@@ -69,7 +69,8 @@ describe("GET /browse", () => {
     expect(res.status).toBe(200);
     const data = await res.json() as any;
     expect(data.current).not.toContain("~");
-    expect(data.current).toContain("/Users/");
+    // Should resolve to actual home directory (works on both macOS and Linux)
+    expect(data.current).toBe(require("os").homedir());
   });
 
   it("returns 400 for nonexistent path", async () => {
