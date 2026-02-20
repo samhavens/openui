@@ -1,0 +1,38 @@
+name: Tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  server-tests:
+    runs-on: ubuntu-latest
+    env:
+      OPENUI_QUIET: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install
+
+      - name: Run server tests with coverage
+        run: bun test --coverage server/tests/
+
+  client-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: cd client && bun install
+
+      - name: Run client tests with coverage enforcement
+        run: cd client && bunx vitest run --coverage
