@@ -14,9 +14,16 @@ Key files:
 ## Testing
 
 - Runtime: Bun (`~/.bun/bin/bun` — not always on PATH)
-- Run tests: `~/.bun/bin/bun test server/tests/mobile-api.test.ts`
-- Convention: Hono's `app.request()` pattern (no HTTP server needed)
-- Test file: `server/tests/mobile-api.test.ts`
+- **Server tests**: `bun test server/tests/` (or `bun run test` from root)
+  - `server/tests/mobile-api.test.ts` — API routes, auth middleware, status-update, canvas CRUD
+  - `server/tests/persistence.test.ts` — atomicWriteJson, state file utilities
+  - Convention: Hono's `app.request()` pattern (no HTTP server needed)
+- **Client unit tests**: `cd client && bunx vitest run` (or `bun run test:client` from root)
+  - `client/src/__tests__/mobile-store.test.ts` — Zustand store
+  - `client/src/__tests__/mobile-gate.test.tsx` — React component tests
+- **Client e2e**: `cd client && bunx playwright test` (requires Chromium install)
+  - `client/e2e/mobile-layout.test.ts` — Playwright mobile geometry regression tests
+- **CI**: GitHub Actions runs server + client unit on every push/PR; e2e runs on PRs only
 
 ## Git
 
