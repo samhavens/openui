@@ -28,7 +28,22 @@ jobs:
           # routes-coverage.test.ts uses mock.module() which poisons the
           # process-wide module cache in Bun, so it runs in its own step above.
           files=$(ls server/tests/*.test.ts | grep -v routes-coverage)
-          bun test --coverage $files
+          bun test --coverage $files 2>&1 | tee /tmp/server-coverage.txt
+
+      - name: Post server coverage to summary
+        if: always()
+        run: |
+          echo "## Server Test Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          # Extract the coverage table and test summary
+          if [ -f /tmp/server-coverage.txt ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E '(^----|^ |^All files|\.ts )' /tmp/server-coverage.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            # Extract pass/fail line
+            grep -E '^\s*\d+ pass' /tmp/server-coverage.txt >> $GITHUB_STEP_SUMMARY || true
+          fi
 
   client-unit:
     runs-on: ubuntu-latest
@@ -41,5 +56,18 @@ jobs:
 
       - run: cd client && bun install
 
-      - name: Run client tests with coverage enforcement
-        run: cd client && bunx vitest run --coverage
+      - name: Run client tests with coverage
+        run: cd client && bunx vitest run --coverage 2>&1 | tee /tmp/client-coverage.txt
+
+      - name: Post client coverage to summary
+        if: always()
+        run: |
+          echo "## Client Test Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/client-coverage.txt ]; then
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -E '(^----|^ |^All files|\.tsx? )' /tmp/client-coverage.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            grep -E 'Test Files|Tests ' /tmp/client-coverage.txt >> $GITHUB_STEP_SUMMARY || true
+          fi
