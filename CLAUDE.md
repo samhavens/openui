@@ -13,17 +13,31 @@ Key files:
 
 ## Testing
 
-- Runtime: Bun (`~/.bun/bin/bun` — not always on PATH)
-- **Server tests**: `bun test server/tests/` (or `bun run test` from root)
-  - `server/tests/mobile-api.test.ts` — API routes, auth middleware, status-update, canvas CRUD
-  - `server/tests/persistence.test.ts` — atomicWriteJson, state file utilities
-  - Convention: Hono's `app.request()` pattern (no HTTP server needed)
-- **Client unit tests**: `cd client && bunx vitest run` (or `bun run test:client` from root)
-  - `client/src/__tests__/mobile-store.test.ts` — Zustand store
-  - `client/src/__tests__/mobile-gate.test.tsx` — React component tests
-- **Client e2e**: `cd client && bunx playwright test` (requires Chromium install)
-  - `client/e2e/mobile-layout.test.ts` — Playwright mobile geometry regression tests
-- **CI**: GitHub Actions runs server + client unit on every push/PR; e2e runs on PRs only
+### Requirements
+
+- **Every PR must include tests for new/changed behavior.** No exceptions for "it's just a small change."
+- **Tests must pass in CI (Ubuntu), not just locally.** Never use hardcoded local paths (`/Users/...`), macOS-specific assumptions, or rely on local state files. Use `process.cwd()`, `os.homedir()`, and temp directories.
+- **Coverage must not regress.** Server ≥70% lines, client ≥70% lines. CI reports coverage in the job summary — check it.
+- **Test what you can, mock what you must, skip what needs e2e.** Pure functions → unit test directly. Route handlers → use `app.request()` with mocked services. PTY spawn / WebSocket / real browser → that's e2e territory, don't force it into unit tests.
+
+### How to run
+
+- **Server**: `OPENUI_QUIET=1 bun test --coverage server/tests/`
+- **Client**: `cd client && bunx vitest run --coverage`
+- **e2e**: `cd client && bunx playwright test` (requires Chromium install)
+
+### CI
+
+GitHub Actions (`.github/workflows/test.yml`) runs server + client unit tests on every push/PR to main. Coverage tables render in the Actions job summary.
+
+**Important**: `server/tests/routes-coverage.test.ts` uses `mock.module()` which poisons Bun's process-wide module cache. It runs in a separate `bun test` invocation in CI. If you add new `mock.module()` calls, they need the same isolation — add them to that file or create a new isolated step.
+
+### Conventions
+
+- Server: Hono's `app.request()` pattern (no HTTP server needed)
+- Client: React Testing Library + Vitest, Zustand store tests with direct `getState()`/`setState()`
+- Extract pure functions from components into `utils/` for direct unit testing
+- Use `fast-check` for property-based tests where the domain supports it
 
 ## Git
 
