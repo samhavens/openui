@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [master, main]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   server-tests:
     runs-on: ubuntu-latest
@@ -28,25 +32,24 @@ jobs:
           # routes-coverage.test.ts uses mock.module() which poisons the
           # process-wide module cache in Bun, so it runs in its own step above.
           files=$(ls server/tests/*.test.ts | grep -v routes-coverage)
-          bun test --coverage $files 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/server-coverage.txt
-          cat /tmp/server-coverage.txt
+          # Strip ANSI codes so the summary renders cleanly
+          bun test --coverage $files 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tee /tmp/server-coverage.txt
 
       - name: Post server coverage to summary
         if: always()
         run: |
           if [ ! -f /tmp/server-coverage.txt ]; then exit 0; fi
-
-          # Extract pass/fail summary
-          pass=$(grep -oP '^\s*\K\d+ pass' /tmp/server-coverage.txt || echo "? pass")
-          fail=$(grep -oP '^\s*\K\d+ fail' /tmp/server-coverage.txt || echo "0 fail")
-
-          echo "## Server Tests: ${pass}, ${fail}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Extract the coverage table (from first ---- line to last ---- line)
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          sed -n '/^---/,/^---/p' /tmp/server-coverage.txt | head -30 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Server Test Coverage"
+            echo ""
+            # Pass/fail counts
+            grep -E '^\s*\d+ (pass|fail)' /tmp/server-coverage.txt | sed 's/^/- **/' | sed 's/$/**/' || true
+            echo ""
+            # Full coverage table between the ---- separators
+            echo '```'
+            awk '/^-{5,}/{found++} found>=1 && found<=3{print}' /tmp/server-coverage.txt
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
 
   client-unit:
     runs-on: ubuntu-latest
@@ -60,23 +63,10 @@ jobs:
       - run: cd client && bun install
 
       - name: Run client tests with coverage
-        run: |
-          cd client && bunx vitest run --coverage 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > /tmp/client-coverage.txt
-          cat /tmp/client-coverage.txt
+        run: cd client && bunx vitest run --coverage
 
-      - name: Post client coverage to summary
+      - name: Coverage report
         if: always()
-        run: |
-          if [ ! -f /tmp/client-coverage.txt ]; then exit 0; fi
-
-          # Extract pass/fail summary
-          files=$(grep -oP '\d+ passed' /tmp/client-coverage.txt | head -1 || echo "? passed")
-          tests=$(grep -oP '\d+ passed' /tmp/client-coverage.txt | tail -1 || echo "? passed")
-
-          echo "## Client Tests: ${tests} (${files} files)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Extract the coverage table (from first ---- line to last ---- line)
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          sed -n '/^---/,/^---/p' /tmp/client-coverage.txt | head -60 >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: client
