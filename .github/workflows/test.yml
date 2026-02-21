@@ -32,24 +32,34 @@ jobs:
           # routes-coverage.test.ts uses mock.module() which poisons the
           # process-wide module cache in Bun, so it runs in its own step above.
           files=$(ls server/tests/*.test.ts | grep -v routes-coverage)
-          # Strip ANSI codes so the summary renders cleanly
           bun test --coverage $files 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tee /tmp/server-coverage.txt
 
-      - name: Post server coverage to summary
+      - name: Post server coverage
         if: always()
         run: |
-          if [ ! -f /tmp/server-coverage.txt ]; then exit 0; fi
-          {
-            echo "## Server Test Coverage"
-            echo ""
-            # Pass/fail counts
-            grep -E '^\s*\d+ (pass|fail)' /tmp/server-coverage.txt | sed 's/^/- **/' | sed 's/$/**/' || true
-            echo ""
-            # Full coverage table between the ---- separators
-            echo '```'
-            awk '/^-{5,}/{found++} found>=1 && found<=3{print}' /tmp/server-coverage.txt
-            echo '```'
-          } >> $GITHUB_STEP_SUMMARY
+          # Generate markdown
+          bash .github/scripts/coverage-comment.sh /tmp/server-coverage.txt > /tmp/server-comment.md
+
+          # Post to job summary
+          cat /tmp/server-comment.md >> $GITHUB_STEP_SUMMARY
+
+          # Post/update PR comment (only on pull_request events)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR=${{ github.event.pull_request.number }}
+            # Find existing comment by marker
+            COMMENT_ID=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" \
+              --jq '.[] | select(.body | contains("<!-- server-coverage-report -->")) | .id' | head -1 || true)
+
+            if [ -n "$COMMENT_ID" ]; then
+              gh api "repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" \
+                -X PATCH -F "body=@/tmp/server-comment.md"
+            else
+              gh api "repos/${{ github.repository }}/issues/${PR}/comments" \
+                -X POST -F "body=@/tmp/server-comment.md"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   client-unit:
     runs-on: ubuntu-latest
