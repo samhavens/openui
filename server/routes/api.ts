@@ -29,12 +29,14 @@ export function buildRestartCommand(
 
   let cmd = normalized;
 
+  // Always strip stale --resume flags for claude agents (even when no fresh UUID)
+  if (agentId === "claude") {
+    cmd = cmd.replace(/--resume\s+[\w-]+/g, "").replace(/--resume(?=\s|$)/g, "").trim();
+  }
+
   // Inject --resume for Claude sessions with a known session UUID
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (agentId === "claude" && claudeSessionId && UUID_RE.test(claudeSessionId)) {
-    // Remove any stale --resume flags first
-    cmd = cmd.replace(/--resume\s+[\w-]+/g, "").replace(/--resume(?=\s|$)/g, "").trim();
-
     const resumeArg = `--resume ${claudeSessionId}`;
     if (cmd.includes("isaac claude")) {
       cmd = cmd.replace("isaac claude", `isaac claude ${resumeArg}`);
@@ -1188,7 +1190,7 @@ function djb2(str: string): number {
  * 8. Collapse 3+ blank lines → 2
  */
 // eslint-disable-next-line no-control-regex
-function stripAnsi(str: string): string {
+export function stripAnsi(str: string): string {
   let s = str;
 
   // --- Pass 1: cursor-movement sequences ---
