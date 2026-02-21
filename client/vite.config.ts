@@ -28,6 +28,7 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/**/__tests__/**", "src/main.tsx"],
+      reporter: ["text", "json-summary", "json"],
     },
   },
 } as any);
