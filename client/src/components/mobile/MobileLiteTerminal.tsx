@@ -85,14 +85,23 @@ function computeMacros(
   tailText: string,
 ): { macros: Macro[]; context?: string } {
   if (status === "waiting_input" && currentTool) {
-    if (currentTool === "AskUserQuestion" && toolInput?.questions?.[0]?.options) {
-      const options = toolInput.questions[0].options as { label: string }[];
-      const macros: Macro[] = options.map((opt, i) => ({
-        label: opt.label,
-        data: `${i + 1}\r`,
-        variant: i === 0 ? "primary" as const : "default" as const,
-      }));
-      return { macros, context: "Question" };
+    if (currentTool === "AskUserQuestion") {
+      // Static numeric + nav buttons instead of dynamic option labels.
+      // Dynamic labels caused double-fire in multi-question flows: the \r
+      // confirming Q1 would land on Q2 before the buttons refreshed.
+      return {
+        macros: [
+          { label: "1", data: "1\r", variant: "primary" as const },
+          { label: "2", data: "2\r" },
+          { label: "3", data: "3\r" },
+          { label: "4", data: "4\r" },
+          { label: "5", data: "5\r" },
+          { label: "↑", data: "\x1b[A" },
+          { label: "↓", data: "\x1b[B" },
+          { label: "↵", data: "\r", variant: "primary" as const },
+        ],
+        context: "Question",
+      };
     }
     return {
       macros: [
@@ -328,14 +337,20 @@ export function MobileLiteTerminal() {
   };
 
   const handleSend = () => {
-    if (!sessionId || !input.trim()) return;
+    if (!sessionId) return;
     setSending(true);
-    sendViaWs(input);
-    // Delay \r so PTY processes the text before the carriage return
-    setTimeout(() => {
+    if (input) {
+      sendViaWs(input);
+      // Delay \r so PTY processes the text before the carriage return
+      setTimeout(() => {
+        sendViaWs("\r");
+        setSending(false);
+      }, 50);
+    } else {
+      // Bare Enter — confirm prompts ("Enter to confirm, Esc to cancel")
       sendViaWs("\r");
       setSending(false);
-    }, 50);
+    }
     setInput("");
   };
 

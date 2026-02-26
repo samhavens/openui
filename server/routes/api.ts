@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, syncSessionToPluginProject, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, normalizeAgentCommand } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, syncSessionToPluginProject, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, normalizeAgentCommand, buildPtyEnv } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { spawnSync } from "bun";
@@ -360,15 +360,14 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
   const startFn = async () => {
+    // Clear stale output so new run doesn't mix with previous buffer
+    session.outputBuffer = [];
+
     const { spawn } = await import("bun-pty");
     const ptyProcess = spawn("/bin/bash", [], {
       name: "xterm-256color",
       cwd: session.cwd,
-      env: {
-        ...process.env,
-        TERM: "xterm-256color",
-        OPENUI_SESSION_ID: sessionId,
-      },
+      env: buildPtyEnv(sessionId),
       rows: 30,
       cols: 120,
     });
@@ -486,11 +485,7 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   const ptyProcess = spawn("/bin/bash", [], {
     name: "xterm-256color",
     cwd: effectiveCwd,
-    env: {
-      ...process.env,
-      TERM: "xterm-256color",
-      OPENUI_SESSION_ID: newSessionId,
-    },
+    env: buildPtyEnv(newSessionId),
     rows: 30,
     cols: 120,
   });
