@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { spawn as spawnPty } from "bun-pty";
-import { existsSync } from "fs";
+import { existsSync, mkdirSync, copyFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type { Session } from "../types";
@@ -28,7 +28,7 @@ const logError = QUIET ? () => {} : console.error.bind(console);
 
 // Detect available CLI at startup
 const HAS_ISAAC = spawnSync(["which", "isaac"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
-export const DEFAULT_CLAUDE_COMMAND = HAS_ISAAC ? "isaac claude" : "llm agent claude";
+export const DEFAULT_CLAUDE_COMMAND = HAS_ISAAC ? "isaac claude" : "claude";
 log(`\x1b[38;5;141m[cli]\x1b[0m Detected CLI: ${DEFAULT_CLAUDE_COMMAND} (isaac ${HAS_ISAAC ? "found" : "not found"})`);
 
 // Get the OpenUI plugin directory path
@@ -96,6 +96,53 @@ export function injectPluginDir(command: string, agentId: string): string {
   }
 
   return command;
+}
+
+/**
+ * Encode a filesystem path to the project directory name Claude Code uses.
+ * Claude replaces each / and . with - then strips the leading -.
+ */
+function encodeProjectPath(absPath: string): string {
+  return absPath.replace(/[/.]/g, "-").replace(/^-/, "");
+}
+
+/**
+ * When --plugin-dir is used, Claude Code derives the project directory from the
+ * plugin dir path rather than the shell cwd. Sessions created from homedir() land
+ * in the home project dir, but --resume looks in the plugin project dir — so the
+ * session file is never found.
+ *
+ * Fix: before running --resume, ensure the session file exists in the plugin
+ * project dir. Claude Code will find it there regardless of where it was first
+ * created. The copy stays in sync: once resumed, Claude writes to the copy.
+ */
+export function syncSessionToPluginProject(claudeSessionId: string): void {
+  const pluginDir = getPluginDir();
+  if (!pluginDir) return;
+
+  const claudeProjectsRoot = join(homedir(), ".claude", "projects");
+  const pluginProjectDir = join(claudeProjectsRoot, `-${encodeProjectPath(pluginDir)}`);
+  const dst = join(pluginProjectDir, `${claudeSessionId}.jsonl`);
+  if (existsSync(dst)) return; // already there
+
+  // Search all project dirs for the session file
+  const { readdirSync } = require("fs");
+  let projectDirs: string[];
+  try {
+    projectDirs = readdirSync(claudeProjectsRoot);
+  } catch {
+    return;
+  }
+  for (const dir of projectDirs) {
+    const src = join(claudeProjectsRoot, dir, `${claudeSessionId}.jsonl`);
+    if (existsSync(src)) {
+      mkdirSync(pluginProjectDir, { recursive: true });
+      copyFileSync(src, dst);
+      log(`\x1b[38;5;141m[resume-sync]\x1b[0m Copied session ${claudeSessionId} → plugin project dir`);
+      return;
+    }
+  }
+  log(`\x1b[38;5;245m[resume-sync]\x1b[0m Session ${claudeSessionId} not found in any project dir`);
 }
 
 // Get git branch for a directory
@@ -457,11 +504,16 @@ export function autoResumeSessions() {
         });
 
         // Build the command with resume flag if we have a Claude session ID
-        let finalCommand = injectPluginDir(session.command, session.agentId);
+        const normalizedCmd = normalizeAgentCommand(session.command, session.agentId, HAS_ISAAC);
+        let finalCommand = injectPluginDir(normalizedCmd, session.agentId);
 
         // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
+          // Ensure the session file is visible in the plugin project dir so --resume
+          // can find it (--plugin-dir changes which project dir Claude looks in).
+          syncSessionToPluginProject(session.claudeSessionId);
+
           // Remove any existing --resume flags first
           finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
 

@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { useStore, AgentStatus } from "../stores/useStore";
+import { ChevronDown } from "lucide-react";
 
 interface TerminalProps {
   sessionId: string;
@@ -18,6 +19,7 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
   const wsRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const mountedRef = useRef(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   useEffect(() => {
     if (!terminalRef.current || !sessionId) return;
@@ -86,12 +88,38 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    // Track scroll position via DOM — term.onScroll fires with viewport row index
+    // which is unreliable; the .xterm-viewport element is the real scrollable element.
+    const viewport = terminalRef.current.querySelector(".xterm-viewport") as HTMLElement | null;
+
+    const checkAtBottom = (): boolean => {
+      if (!viewport) return true;
+      return viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 40;
+    };
+
+    const onViewportScroll = () => setShowScrollButton(!checkAtBottom());
+    viewport?.addEventListener("scroll", onViewportScroll);
+
     // Connect WebSocket with small delay to allow session to be ready
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/ws?sessionId=${sessionId}`;
 
     let ws: WebSocket | null = null;
     let isFirstMessage = true;
+
+    // Split large writes into 8KB chunks so the browser event loop can breathe
+    // between chunks (xterm internally queues write() calls sequentially).
+    const writeChunked = (data: string, onDone?: () => void) => {
+      const CHUNK = 8192;
+      if (data.length <= CHUNK) { term.write(data, onDone); return; }
+      let i = 0;
+      const next = () => {
+        if (i >= data.length) { onDone?.(); return; }
+        term.write(data.slice(i, i + CHUNK), next);
+        i += CHUNK;
+      };
+      next();
+    };
 
     const connectWs = () => {
       if (!mountedRef.current) return;
@@ -119,13 +147,19 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
               isFirstMessage = false;
               // Clear screen, reset attributes, move cursor home
               term.write("\x1b[2J\x1b[H\x1b[0m");
-              term.write(msg.data);
-              // Scroll to bottom after content renders to show most recent output
-              setTimeout(() => {
-                if (mountedRef.current) term.scrollToBottom();
-              }, 50);
+              // Chunk history write to avoid blocking the UI, scroll after done
+              writeChunked(msg.data, () => {
+                if (mountedRef.current) {
+                  term.scrollToBottom();
+                  setShowScrollButton(false);
+                }
+              });
             } else {
-              term.write(msg.data);
+              term.write(msg.data, () => {
+                if (mountedRef.current && checkAtBottom()) {
+                  setShowScrollButton(false);
+                }
+              });
             }
           } else if (msg.type === "status") {
             // Handle status updates from plugin hooks
@@ -187,21 +221,36 @@ export function Terminal({ sessionId, color, nodeId }: TerminalProps) {
       mountedRef.current = false;
       clearTimeout(connectTimeout);
       resizeObserver.disconnect();
+      viewport?.removeEventListener("scroll", onViewportScroll);
       ws?.close();
       term.dispose();
     };
   }, [sessionId, color, nodeId, updateSession]);
 
   return (
-    <div
-      ref={terminalRef}
-      className="w-full h-full overflow-hidden"
-      style={{
-        padding: "12px",
-        backgroundColor: "#0d0d0d",
-        minHeight: "200px",
-        boxSizing: "border-box"
-      }}
-    />
+    <div className="relative w-full h-full">
+      <div
+        ref={terminalRef}
+        className="w-full h-full overflow-hidden"
+        style={{
+          padding: "12px",
+          backgroundColor: "#0d0d0d",
+          minHeight: "200px",
+          boxSizing: "border-box"
+        }}
+      />
+      {showScrollButton && (
+        <button
+          onClick={() => {
+            xtermRef.current?.scrollToBottom();
+            setShowScrollButton(false);
+          }}
+          className="absolute bottom-4 right-4 flex items-center justify-center w-7 h-7 rounded-full bg-zinc-700 hover:bg-zinc-600 text-white opacity-80 hover:opacity-100 transition-all"
+          title="Scroll to bottom"
+        >
+          <ChevronDown className="w-4 h-4" />
+        </button>
+      )}
+    </div>
   );
 }

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Agent } from "../types";
-import { sessions, createSession, deleteSession, injectPluginDir, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, normalizeAgentCommand } from "../services/sessionManager";
+import { sessions, createSession, deleteSession, injectPluginDir, syncSessionToPluginProject, broadcastToSession, MAX_BUFFER_SIZE, getGitBranch, DEFAULT_CLAUDE_COMMAND, normalizeAgentCommand } from "../services/sessionManager";
 import { loadState, saveState, savePositions, getDataDir, loadCanvases, saveCanvases, migrateCategoriesToCanvases, atomicWriteJson, loadBuffer } from "../services/persistence";
 import { signalSessionReady, getQueueProgress } from "../services/sessionStartQueue";
 import { spawnSync } from "bun";
@@ -8,7 +8,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { existsSync, readFileSync, statSync } from "fs";
 
-const LAUNCH_CWD = process.env.LAUNCH_CWD || process.cwd();
+const LAUNCH_CWD = process.env.LAUNCH_CWD || homedir();
 
 /**
  * Build the shell command to run when restarting a session.
@@ -409,6 +409,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
     let finalCommand = injectPluginDir(builtCommand, session.agentId);
 
     if (session.claudeSessionId) {
+      syncSessionToPluginProject(session.claudeSessionId);
       log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId} (isaac=${hasIsaac})`);
     }
 
@@ -543,7 +544,9 @@ apiRoutes.post("/sessions/:sessionId/fork", async (c) => {
   });
 
   // Build the fork command: inject plugin-dir, then --resume <id> --fork-session + isaac flags
-  let finalCommand = injectPluginDir(session.command, session.agentId);
+  const hasIsaacFork = Bun.spawnSync(["which", "isaac"], { stderr: "ignore" }).exitCode === 0;
+  const normalizedForkCmd = normalizeAgentCommand(session.command, session.agentId, hasIsaacFork);
+  let finalCommand = injectPluginDir(normalizedForkCmd, session.agentId);
   finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
   const forkArg = `--resume ${session.claudeSessionId} --fork-session`;
   if (finalCommand.includes("isaac claude")) {
