@@ -32,14 +32,15 @@ if (process.argv[2] === "resume") {
   const priority: Record<string, number> = { handoff: 0, waiting_input: 1, idle: 2, disconnected: 3, running: 4, error: 5 };
   allSessions.sort((a, b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
 
-  // Format lines for fzf
-  const lines = allSessions.map(s => {
-    const name = (s.customName || s.agentName || "Agent").padEnd(24);
+  // Format a session as a fixed-width fzf line
+  function formatLine(s: any): string {
     const status = s.status.padEnd(14);
+    const name = (s.customName || s.agentName || "Agent").padEnd(24);
     const branch = (s.gitBranch || "").padEnd(28);
-    const cwd = s.cwd || "";
-    return `${status} ${name} ${branch} ${cwd}`;
-  }).join("\n");
+    return `${status} ${name} ${branch} ${s.cwd || ""}`;
+  }
+
+  const lines = allSessions.map(formatLine).join("\n");
 
   const fzf = Bun.spawn(["fzf", "--ansi", "--no-sort", "--prompt=openui resume > "], {
     stdin: new TextEncoder().encode(lines),
@@ -52,14 +53,10 @@ if (process.argv[2] === "resume") {
   const selected = await new Response(fzf.stdout).text();
   if (!selected.trim()) process.exit(0);
 
-  // Match selected line back to a session by comparing content
-  const selectedSession = allSessions.find(s => {
-    const name = (s.customName || s.agentName || "Agent").padEnd(24);
-    const status = s.status.padEnd(14);
-    const branch = (s.gitBranch || "").padEnd(28);
-    const cwd = s.cwd || "";
-    return selected.trim() === `${status} ${name} ${branch} ${cwd}`.trim();
-  }) || allSessions.find(s => selected.includes(s.cwd));
+  // Match selected line back to a session; fall back to cwd substring match
+  const selectedSession =
+    allSessions.find(s => formatLine(s).trim() === selected.trim()) ||
+    allSessions.find(s => s.cwd && selected.includes(s.cwd));
 
   if (!selectedSession) {
     console.error("Could not identify selected session.");

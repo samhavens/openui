@@ -364,7 +364,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
   // Skip this guard for handoff sessions — they were explicitly stopped for us to take over.
   if (session.claudeSessionId && session.status !== "handoff") {
     const lsofCheck = Bun.spawnSync(["lsof", "-t", `${join(homedir(), ".claude", "projects")}/${session.claudeSessionId}.jsonl`], { stderr: "ignore" });
-    if (lsofCheck.stdout.toString().trim().split("\n").filter(Boolean).length > 0) {
+    if (lsofCheck.stdout.toString().trim() !== "") {
       return c.json({
         error: "Session appears to be running in another terminal. Stop it there first.",
         lsofConflict: true,
@@ -909,14 +909,12 @@ apiRoutes.post("/status-update", async (c) => {
         gitBranch: session.gitBranch,
       });
 
-      if (session.handoffTarget === "openui") {
+      if (session.handoffTarget === "openui" && openuiSessionId) {
         // Auto-resume in a new OpenUI PTY after a short delay
-        const autoResumeId = openuiSessionId;
         setTimeout(() => {
-          const resumeSession = autoResumeId ? sessions.get(autoResumeId) : null;
+          const resumeSession = sessions.get(openuiSessionId);
           if (resumeSession && resumeSession.status === "handoff" && !resumeSession.pty) {
-            // Reuse the restart logic by making an internal fetch call
-            fetch(`http://localhost:${process.env.PORT || "6968"}/api/sessions/${autoResumeId}/restart`, {
+            fetch(`http://localhost:${process.env.PORT || "6968"}/api/sessions/${openuiSessionId}/restart`, {
               method: "POST",
             }).catch(e => log(`[handoff] Auto-resume fetch failed: ${e}`));
           }
@@ -938,11 +936,12 @@ apiRoutes.post("/status-update", async (c) => {
     });
 
     // Include pendingHandoff in response so the hook can act on it
-    const pendingHandoff = session.pendingHandoff;
-    const sessionName = session.customName || session.agentName || "Session";
     return c.json({
       success: true,
-      ...(pendingHandoff && { pendingHandoff: true, sessionName }),
+      ...(session.pendingHandoff && {
+        pendingHandoff: true,
+        sessionName: session.customName || session.agentName || "Session",
+      }),
     });
   }
 
