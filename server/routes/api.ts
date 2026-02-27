@@ -200,6 +200,7 @@ apiRoutes.get("/sessions", (c) => {
         ticketTitle: session.ticketTitle,
         canvasId: session.canvasId, // Canvas/tab this agent belongs to
         longRunningTool: session.longRunningTool || false,
+        claudeSessionId: session.claudeSessionId,
       };
     });
   return c.json(sessionList);
@@ -359,7 +360,28 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
 
   if (session.pty) return c.json({ error: "Session already running" }, 400);
 
+  // Guard: if a different process has the Claude session file open, refuse to restart.
+  // Skip this guard for handoff sessions — they were explicitly stopped for us to take over.
+  if (session.claudeSessionId && session.status !== "handoff") {
+    const lsofCheck = Bun.spawnSync(["lsof", "-t", `${join(homedir(), ".claude", "projects")}/${session.claudeSessionId}.jsonl`], { stderr: "ignore" });
+    if (lsofCheck.stdout.toString().trim().split("\n").filter(Boolean).length > 0) {
+      return c.json({
+        error: "Session appears to be running in another terminal. Stop it there first.",
+        lsofConflict: true,
+      }, 409);
+    }
+  }
+
+  // Clear handoff state before restarting
+  if (session.status === "handoff") {
+    session.pendingHandoff = false;
+    session.handoffTarget = undefined;
+  }
+
   const startFn = async () => {
+    // Clear stale output so new run doesn't mix with previous buffer
+    session.outputBuffer = [];
+
     const { spawn } = await import("bun-pty");
     const ptyProcess = spawn("/bin/bash", [], {
       name: "xterm-256color",
@@ -368,6 +390,7 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
         ...process.env,
         TERM: "xterm-256color",
         OPENUI_SESSION_ID: sessionId,
+        OPENUI_PORT: process.env.PORT || "6968",
       },
       rows: 30,
       cols: 120,
@@ -646,6 +669,35 @@ apiRoutes.patch("/sessions/:sessionId/archive", async (c) => {
   return c.json({ success: true });
 });
 
+// Request a session handoff to terminal or openui
+apiRoutes.post("/sessions/:sessionId/request-handoff", async (c) => {
+  const sessionId = c.req.param("sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return c.json({ error: "Session not found" }, 404);
+
+  const body = await c.req.json().catch(() => ({}));
+  const target: "terminal" | "openui" = body.target || "terminal";
+
+  session.pendingHandoff = true;
+  session.handoffTarget = target;
+
+  if (target === "terminal") {
+    // We own the PTY — signal Claude to stop gracefully
+    if (session.status === "running" || session.status === "waiting_input" || session.status === "tool_calling") {
+      session.pty?.write("\x03"); // ^C — hook will fire and complete the handoff
+    } else {
+      // Already idle/disconnected — set handoff immediately (no hook will fire)
+      session.status = "handoff";
+      session.pendingHandoff = false;
+      saveState(sessions);
+      broadcastToSession(session, { type: "status", status: "handoff", isRestored: session.isRestored });
+    }
+  }
+  // For target === "openui": no PTY to signal; hook picks it up on next tool call
+
+  return c.json({ success: true });
+});
+
 // Status update endpoint for Claude Code plugin
 apiRoutes.post("/status-update", async (c) => {
   const body = await c.req.json();
@@ -844,6 +896,36 @@ apiRoutes.post("/status-update", async (c) => {
       }
     }
 
+    // Handle Stop/SessionEnd: if a handoff was requested, finalize it
+    if ((hookEvent === "Stop" || hookEvent === "SessionEnd") && session.pendingHandoff) {
+      session.status = "handoff";
+      session.pendingHandoff = false;
+      saveState(sessions);
+      broadcastToSession(session, {
+        type: "status",
+        status: "handoff",
+        isRestored: session.isRestored,
+        hookEvent,
+        gitBranch: session.gitBranch,
+      });
+
+      if (session.handoffTarget === "openui") {
+        // Auto-resume in a new OpenUI PTY after a short delay
+        const autoResumeId = openuiSessionId;
+        setTimeout(() => {
+          const resumeSession = autoResumeId ? sessions.get(autoResumeId) : null;
+          if (resumeSession && resumeSession.status === "handoff" && !resumeSession.pty) {
+            // Reuse the restart logic by making an internal fetch call
+            fetch(`http://localhost:${process.env.PORT || "6968"}/api/sessions/${autoResumeId}/restart`, {
+              method: "POST",
+            }).catch(e => log(`[handoff] Auto-resume fetch failed: ${e}`));
+          }
+        }, 500);
+      }
+
+      return c.json({ success: true });
+    }
+
     // Broadcast status change to connected clients
     broadcastToSession(session, {
       type: "status",
@@ -855,7 +937,13 @@ apiRoutes.post("/status-update", async (c) => {
       longRunningTool: session.longRunningTool || false,
     });
 
-    return c.json({ success: true });
+    // Include pendingHandoff in response so the hook can act on it
+    const pendingHandoff = session.pendingHandoff;
+    const sessionName = session.customName || session.agentName || "Session";
+    return c.json({
+      success: true,
+      ...(pendingHandoff && { pendingHandoff: true, sessionName }),
+    });
   }
 
   // No session found

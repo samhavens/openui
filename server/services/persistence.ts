@@ -290,6 +290,8 @@ export function saveState(sessions: Map<string, Session>) {
       autoResumed: session.autoResumed || false,  // Track if session was auto-resumed
       canvasId,  // Canvas/tab this agent belongs to
       gitBranch: session.gitBranch,
+      // Only persist handoff status; all other statuses are runtime
+      status: session.status === "handoff" ? "handoff" : undefined,
       // Ticket info
       ticketId: session.ticketId,
       ticketTitle: session.ticketTitle,

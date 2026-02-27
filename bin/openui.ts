@@ -7,6 +7,109 @@ import { homedir } from "os";
 import { fileURLToPath } from "url";
 import packageJson from "../package.json" assert { type: "json" };
 
+// `openui resume` — pick a session via fzf and resume it in the terminal
+if (process.argv[2] === "resume") {
+  const PORT = process.env.PORT || process.env.OPENUI_PORT || "6968";
+  let allSessions: any[] = [];
+  try {
+    const res = await fetch(`http://localhost:${PORT}/api/sessions`);
+    if (!res.ok) {
+      console.error(`Could not reach OpenUI server at localhost:${PORT}`);
+      process.exit(1);
+    }
+    allSessions = await res.json();
+  } catch {
+    console.error(`Could not reach OpenUI server at localhost:${PORT}`);
+    process.exit(1);
+  }
+
+  if (allSessions.length === 0) {
+    console.log("No sessions found.");
+    process.exit(0);
+  }
+
+  // Sort: handoff first, then waiting_input, idle, running, others
+  const priority: Record<string, number> = { handoff: 0, waiting_input: 1, idle: 2, disconnected: 3, running: 4, error: 5 };
+  allSessions.sort((a, b) => (priority[a.status] ?? 9) - (priority[b.status] ?? 9));
+
+  // Format lines for fzf
+  const lines = allSessions.map(s => {
+    const name = (s.customName || s.agentName || "Agent").padEnd(24);
+    const status = s.status.padEnd(14);
+    const branch = (s.gitBranch || "").padEnd(28);
+    const cwd = s.cwd || "";
+    return `${status} ${name} ${branch} ${cwd}`;
+  }).join("\n");
+
+  const fzf = Bun.spawn(["fzf", "--ansi", "--no-sort", "--prompt=openui resume > "], {
+    stdin: new TextEncoder().encode(lines),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  await fzf.exited;
+  if (fzf.exitCode !== 0) process.exit(0);
+
+  const selected = await new Response(fzf.stdout).text();
+  if (!selected.trim()) process.exit(0);
+
+  // Match selected line back to a session by comparing content
+  const selectedSession = allSessions.find(s => {
+    const name = (s.customName || s.agentName || "Agent").padEnd(24);
+    const status = s.status.padEnd(14);
+    const branch = (s.gitBranch || "").padEnd(28);
+    const cwd = s.cwd || "";
+    return selected.trim() === `${status} ${name} ${branch} ${cwd}`.trim();
+  }) || allSessions.find(s => selected.includes(s.cwd));
+
+  if (!selectedSession) {
+    console.error("Could not identify selected session.");
+    process.exit(1);
+  }
+
+  if (!selectedSession.claudeSessionId) {
+    console.error("Session has no claudeSessionId — cannot resume.");
+    process.exit(1);
+  }
+
+  // If session is active in OpenUI, request handoff first
+  const activeStatuses = ["running", "waiting_input", "tool_calling"];
+  if (activeStatuses.includes(selectedSession.status)) {
+    process.stdout.write("Session is active in OpenUI — detaching");
+    await fetch(`http://localhost:${PORT}/api/sessions/${selectedSession.sessionId}/request-handoff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "terminal" }),
+    });
+    // Poll until handoff or disconnected
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      process.stdout.write(".");
+      try {
+        const check = await fetch(`http://localhost:${PORT}/api/sessions`).then(r => r.json());
+        const s = check.find((x: any) => x.sessionId === selectedSession.sessionId);
+        if (!s || s.status === "handoff" || s.status === "disconnected") break;
+      } catch { break; }
+    }
+    console.log(" done.");
+  }
+
+  const pluginDir = join(homedir(), ".openui", "claude-code-plugin");
+  const parts = ["claude", "--resume", selectedSession.claudeSessionId];
+  if (existsSync(join(pluginDir, ".claude-plugin", "plugin.json"))) {
+    parts.push("--plugin-dir", pluginDir);
+  }
+
+  console.log(`\n${parts.join(" ")}\n`);
+  // exec: replace this process with claude
+  const proc = Bun.spawn(parts, {
+    cwd: selectedSession.cwd || homedir(),
+    stdio: ["inherit", "inherit", "inherit"],
+    env: { ...process.env, OPENUI_PORT: PORT },
+  });
+  await proc.exited;
+  process.exit(proc.exitCode ?? 0);
+}
+
 // Get the actual module directory (works with symlinks)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

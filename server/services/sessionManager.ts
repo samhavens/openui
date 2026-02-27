@@ -368,7 +368,7 @@ export function restoreSessions() {
       createdAt: node.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
-      status: "disconnected",
+      status: node.status === "handoff" ? "handoff" : "disconnected",
       lastOutputTime: 0,
       lastInputTime: 0,
       recentOutputSize: 0,

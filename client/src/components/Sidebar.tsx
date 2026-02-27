@@ -31,6 +31,7 @@ const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   idle: { label: "Idle", color: "#6B7280" },
   disconnected: { label: "Disconnected", color: "#EF4444" },
   error: { label: "Error", color: "#EF4444" },
+  handoff: { label: "Ready for terminal", color: "#14B8A6" },
 };
 
 const presetColors = [

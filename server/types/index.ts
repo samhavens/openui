@@ -2,7 +2,7 @@ import type { IPty } from "bun-pty";
 import type { ServerWebSocket } from "bun";
 import type { Canvas } from "./canvas";
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error" | "handoff";
 
 export interface Session {
   pty: IPty | null;
@@ -54,6 +54,9 @@ export interface Session {
   canvasId?: string;
   // Runtime-only: throttle git branch checks
   _lastBranchCheck?: number;
+  // Handoff state
+  pendingHandoff?: boolean;
+  handoffTarget?: "terminal" | "openui";
 }
 
 export interface PersistedNode {
@@ -78,6 +81,8 @@ export interface PersistedNode {
   ticketId?: string;
   ticketTitle?: string;
   ticketUrl?: string;
+  // Only "handoff" is persisted; other statuses are runtime
+  status?: "handoff";
 }
 
 export interface PersistedCategory {

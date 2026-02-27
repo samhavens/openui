@@ -141,6 +141,19 @@ if [ -n "$STATUS" ]; then
     -d "$PAYLOAD" \
     --max-time 2 2>&1) || true
   echo "[$(date)] Response: $RESPONSE" >> "$DEBUG_LOG" 2>/dev/null || true
+
+  # Check if server is requesting a handoff (Terminal → Mobile flow)
+  if command -v jq &> /dev/null; then
+    PENDING=$(echo "$RESPONSE" | jq -r '.pendingHandoff // false' 2>/dev/null || echo "false")
+    if [ "$PENDING" = "true" ]; then
+      SESSION_NAME=$(echo "$RESPONSE" | jq -r '.sessionName // "Session"' 2>/dev/null || echo "Session")
+      printf '\n\n  \033[1;33m⏸  SUSPENDED: %s\033[0m\n\n' "$SESSION_NAME" > /dev/tty
+      printf '  Go to:    \033[1;36mhttp://localhost:6968\033[0m\n' > /dev/tty
+      printf '  Terminal: \033[1mopenui resume\033[0m\n\n' > /dev/tty
+      kill -TERM $PPID
+      exit 0
+    fi
+  fi
 fi
 
 # Always exit successfully so we don't block Claude
