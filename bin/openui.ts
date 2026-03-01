@@ -90,23 +90,8 @@ if (process.argv[2] === "resume") {
     console.log(" done.");
   }
 
-  // No --plugin-dir: claude searches all project dirs for the session file.
-  // Using --plugin-dir restricts the search to one dir and breaks --resume
-  // when the file lives in a different project dir.
-  const parts = ["claude", "--resume", selectedSession.claudeSessionId];
-
-  // Strip Claude Code's nested-session guard vars so claude can start
-  const { CLAUDECODE, CLAUDE_CODE_ENTRYPOINT, ...restEnv } = process.env as Record<string, string>;
-  void CLAUDECODE; void CLAUDE_CODE_ENTRYPOINT;
-
-  console.log(`\n${parts.join(" ")}\n`);
-  const proc = Bun.spawn(parts, {
-    cwd: selectedSession.cwd || homedir(),
-    stdio: ["inherit", "inherit", "inherit"],
-    env: { ...restEnv, OPENUI_PORT: PORT },
-  });
-  await proc.exited;
-  process.exit(proc.exitCode ?? 0);
+  const cmd = `claude --resume ${selectedSession.claudeSessionId}`;
+  console.log(`\nRun this to resume:\n\n  ${cmd}\n`);
 }
 
 // Get the actual module directory (works with symlinks)
