@@ -134,6 +134,7 @@ export function buildPtyEnv(sessionId: string): Record<string, string> {
   }
   clean.TERM = "xterm-256color";
   clean.OPENUI_SESSION_ID = sessionId;
+  clean.OPENUI_PORT = process.env.PORT || "6968";
   return clean;
 }
 

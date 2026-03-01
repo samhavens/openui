@@ -90,11 +90,10 @@ if (process.argv[2] === "resume") {
     console.log(" done.");
   }
 
-  const pluginDir = join(homedir(), ".openui", "claude-code-plugin");
+  // No --plugin-dir: claude searches all project dirs for the session file.
+  // Using --plugin-dir restricts the search to one dir and breaks --resume
+  // when the file lives in a different project dir.
   const parts = ["claude", "--resume", selectedSession.claudeSessionId];
-  if (existsSync(join(pluginDir, ".claude-plugin", "plugin.json"))) {
-    parts.push("--plugin-dir", pluginDir);
-  }
 
   console.log(`\n${parts.join(" ")}\n`);
   // exec: replace this process with claude
