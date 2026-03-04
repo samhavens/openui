@@ -429,7 +429,12 @@ apiRoutes.post("/sessions/:sessionId/restart", async (c) => {
       session.claudeSessionId,
       hasIsaac,
     );
-    let finalCommand = injectPluginDir(builtCommand, session.agentId);
+    // Only inject --plugin-dir for fresh sessions. For resumed sessions
+    // (claudeSessionId set), the JSONL lives in ~/.claude/projects/-Users-sam-havens/
+    // and --plugin-dir makes Claude look in the wrong project dir.
+    let finalCommand = session.claudeSessionId
+      ? builtCommand
+      : injectPluginDir(builtCommand, session.agentId);
 
     if (session.claudeSessionId) {
       log(`\x1b[38;5;141m[session]\x1b[0m Resuming Claude session: ${session.claudeSessionId} (isaac=${hasIsaac})`);

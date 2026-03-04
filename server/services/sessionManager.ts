@@ -457,11 +457,15 @@ export function autoResumeSessions() {
           broadcastToSession(session, { type: "output", data });
         });
 
-        // Build the command with resume flag if we have a Claude session ID
-        let finalCommand = injectPluginDir(session.command, session.agentId);
-
-        // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
+        // Build the command with resume flag if we have a Claude session ID.
+        // Don't inject --plugin-dir for resumed sessions: the JSONL lives in
+        // the home project dir and --plugin-dir makes Claude look in the wrong place.
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isResume = session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId);
+        let finalCommand = isResume
+          ? normalizeAgentCommand(session.command, session.agentId, HAS_ISAAC)
+          : injectPluginDir(session.command, session.agentId);
+
         if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
           // Remove any existing --resume flags first
           finalCommand = finalCommand.replace(/--resume\s+[\w-]+/g, '').replace(/--resume(?=\s|$)/g, '').trim();
