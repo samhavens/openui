@@ -103,7 +103,7 @@ function getDb(): Database {
   }
 }
 
-function initSchema(database: Database) {
+export function initSchema(database: Database) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       session_id TEXT PRIMARY KEY,
@@ -268,7 +268,7 @@ export function ensureIndex(options?: { daysBack?: number }): void {
   }
 }
 
-function indexConversation(database: Database, params: {
+export function indexConversation(database: Database, params: {
   sessionId: string;
   filePath: string;
   fileMtime: number;
@@ -417,7 +417,7 @@ function indexConversation(database: Database, params: {
 
 // ---------- Content Extraction ----------
 
-function extractContent(parsed: any): string {
+export function extractContent(parsed: any): string {
   const msg = parsed.message;
   if (!msg) return "";
 
@@ -457,7 +457,7 @@ function extractContent(parsed: any): string {
   return "";
 }
 
-function detectToolNoise(content: string): boolean {
+export function detectToolNoise(content: string): boolean {
   // Skip very short messages
   if (content.length < 50) return true;
 
@@ -677,7 +677,7 @@ function mapRow(row: any): ConversationSearchResult {
   };
 }
 
-function sanitizeFtsQuery(query: string): string {
+export function sanitizeFtsQuery(query: string): string {
   // Remove FTS5 special operators to prevent syntax errors
   let sanitized = query.replace(/[":{}()\[\]^~*]/g, " ").trim();
 
