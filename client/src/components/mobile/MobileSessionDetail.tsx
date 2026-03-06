@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCcw, Trash2, Check } from "lucide-react";
+import { RotateCcw, Trash2, Check, Terminal } from "lucide-react";
 import { useStore } from "../../stores/useStore";
 import { BottomSheet } from "./BottomSheet";
 
@@ -53,6 +53,16 @@ export function MobileSessionDetail({ open, onClose }: Props) {
     setConfirmAction(null);
     onClose();
     setMobileView("dashboard");
+  };
+
+  const handleHandoffToTerminal = async () => {
+    if (!sessionId) return;
+    await fetch(`/api/sessions/${sessionId}/request-handoff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "terminal" }),
+    });
+    // UI will update via polling when status → handoff
   };
 
   const saveNotes = async () => {
@@ -148,10 +158,17 @@ export function MobileSessionDetail({ open, onClose }: Props) {
                 <RotateCcw className="w-4 h-4" /> Restart
               </button>
               <button
-                onClick={() => setConfirmAction("archive")}
-                className="flex-1 flex items-center justify-center gap-2 bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-xl py-3 text-sm"
+                onClick={handleHandoffToTerminal}
+                className="flex-1 flex items-center justify-center gap-2 bg-zinc-800 border border-teal-700/50 text-teal-400 rounded-xl py-3 text-sm"
+                title="Stop here and resume in terminal"
               >
-                <Trash2 className="w-4 h-4" /> Archive
+                <Terminal className="w-4 h-4" /> Terminal
+              </button>
+              <button
+                onClick={() => setConfirmAction("archive")}
+                className="flex items-center justify-center gap-1 bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-xl px-3 py-3 text-sm"
+              >
+                <Trash2 className="w-4 h-4" />
               </button>
               <button
                 onClick={() => setConfirmAction("kill")}

@@ -19,7 +19,7 @@ export interface Agent {
   icon: string;
 }
 
-export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error";
+export type AgentStatus = "running" | "waiting_input" | "tool_calling" | "idle" | "disconnected" | "error" | "handoff";
 
 export interface AgentSession {
   id: string;
@@ -119,8 +119,8 @@ export interface AppState {
   setMobileView: (view: 'dashboard' | 'detail' | 'terminal') => void;
   mobileSessionId: string | null;
   setMobileSessionId: (id: string | null) => void;
-  mobileStatusFilter: 'all' | 'waiting_input' | 'running' | 'idle' | 'error';
-  setMobileStatusFilter: (f: 'all' | 'waiting_input' | 'running' | 'idle' | 'error') => void;
+  mobileStatusFilter: 'all' | 'waiting_input' | 'running' | 'idle' | 'error' | 'handoff';
+  setMobileStatusFilter: (f: 'all' | 'waiting_input' | 'running' | 'idle' | 'error' | 'handoff') => void;
   mobileSearchQuery: string;
   setMobileSearchQuery: (q: string) => void;
 }

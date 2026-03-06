@@ -587,6 +587,153 @@ describe("GET /sessions/:id/tail includes toolInput and currentTool", () => {
   });
 });
 
+// --- Session Handoff ---
+
+const HANDOFF_SESSION_ID = "session-handoff-test-99";
+
+describe("POST /sessions/:id/request-handoff", () => {
+  beforeAll(() => {
+    sessions.set(HANDOFF_SESSION_ID, makeSession({ status: "idle" }));
+  });
+
+  it("returns 404 for unknown session", async () => {
+    const res = await apiRoutes.request("/sessions/nonexistent/request-handoff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "terminal" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("sets pendingHandoff flag when session is idle (target=terminal)", async () => {
+    const session = sessions.get(HANDOFF_SESSION_ID)!;
+    session.status = "idle";
+    session.pendingHandoff = false;
+
+    const res = await apiRoutes.request(`/sessions/${HANDOFF_SESSION_ID}/request-handoff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "terminal" }),
+    });
+    expect(res.status).toBe(200);
+
+    // Idle sessions with no PTY go straight to handoff
+    expect(session.status).toBe("handoff");
+    expect(session.handoffTarget).toBe("terminal");
+  });
+
+  it("sets pendingHandoff=true for openui target without PTY signal", async () => {
+    const session = sessions.get(HANDOFF_SESSION_ID)!;
+    session.status = "idle";
+    session.pendingHandoff = false;
+    session.handoffTarget = undefined;
+
+    const res = await apiRoutes.request(`/sessions/${HANDOFF_SESSION_ID}/request-handoff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: "openui" }),
+    });
+    expect(res.status).toBe(200);
+
+    // For openui target from idle session, just sets pendingHandoff flag
+    // (hook fires on next tool call)
+    expect(session.pendingHandoff).toBe(true);
+    expect(session.handoffTarget).toBe("openui");
+  });
+});
+
+describe("POST /status-update → handoff on Stop", () => {
+  const STOP_SESSION_ID = "session-stop-handoff-88";
+
+  beforeAll(() => {
+    sessions.set(STOP_SESSION_ID, makeSession({
+      status: "idle",
+      pendingHandoff: true,
+      handoffTarget: "terminal",
+    }));
+  });
+
+  it("sets status=handoff and clears pendingHandoff when Stop fires with pendingHandoff", async () => {
+    const session = sessions.get(STOP_SESSION_ID)!;
+    session.status = "idle";
+    session.pendingHandoff = true;
+    session.handoffTarget = "terminal";
+
+    const res = await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "idle",
+        openuiSessionId: STOP_SESSION_ID,
+        hookEvent: "Stop",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(session.status).toBe("handoff");
+    expect(session.pendingHandoff).toBe(false);
+  });
+
+  it("includes pendingHandoff in response when flag is set", async () => {
+    const PENDING_SESSION_ID = "session-pending-77";
+    sessions.set(PENDING_SESSION_ID, makeSession({
+      status: "running",
+      pendingHandoff: true,
+      handoffTarget: "terminal",
+      customName: "My Task",
+    }));
+
+    const res = await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "pre_tool",
+        openuiSessionId: PENDING_SESSION_ID,
+        toolName: "Read",
+        hookEvent: "PreToolUse",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.pendingHandoff).toBe(true);
+    expect(body.sessionName).toBe("My Task");
+
+    sessions.delete(PENDING_SESSION_ID);
+  });
+
+  it("does NOT include pendingHandoff in normal status-update response", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.pendingHandoff = false;
+
+    const res = await apiRoutes.request("/status-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "idle",
+        openuiSessionId: TEST_SESSION_ID,
+        hookEvent: "Stop",
+      }),
+    });
+    const body = await res.json();
+    expect(body.pendingHandoff).toBeUndefined();
+  });
+});
+
+describe("GET /sessions includes claudeSessionId", () => {
+  it("returns claudeSessionId in session list", async () => {
+    const session = sessions.get(TEST_SESSION_ID)!;
+    session.claudeSessionId = "d25d76b4-db0b-47c2-a783-4a15ac95d561";
+
+    const res = await apiRoutes.request("/sessions");
+    expect(res.status).toBe(200);
+    const list = await res.json();
+    const s = list.find((x: any) => x.sessionId === TEST_SESSION_ID);
+    expect(s).toBeDefined();
+    expect(s.claudeSessionId).toBe("d25d76b4-db0b-47c2-a783-4a15ac95d561");
+
+    session.claudeSessionId = undefined;
+  });
+});
+
 // --- Auth middleware (tested via env var) ---
 
 describe("tokenAuth middleware (integration via env)", () => {

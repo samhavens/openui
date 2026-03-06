@@ -8,6 +8,7 @@ const STATUS_STYLES: Record<string, string> = {
   error: "bg-red-500/15 text-red-400 border-red-500/20",
   disconnected: "bg-zinc-800/50 text-zinc-600 border-zinc-700/30",
   tool_calling: "bg-purple-500/15 text-purple-400 border-purple-500/20",
+  handoff: "bg-teal-500/15 text-teal-400 border-teal-500/20",
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -17,6 +18,7 @@ const STATUS_LABELS: Record<string, string> = {
   error: "Error",
   disconnected: "Disconnected",
   tool_calling: "Using tool",
+  handoff: "Ready for terminal",
 };
 
 interface Props {

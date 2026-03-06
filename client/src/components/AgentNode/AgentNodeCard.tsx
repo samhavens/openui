@@ -9,6 +9,7 @@ const statusConfig: Record<AgentStatus, { label: string; color: string; isActive
   idle: { label: "Idle", color: "#FBBF24", needsAttention: true },
   disconnected: { label: "Offline", color: "#6B7280" },
   error: { label: "Error", color: "#EF4444", needsAttention: true },
+  handoff: { label: "Ready for terminal", color: "#14B8A6" },
 };
 
 // Tool name display mapping

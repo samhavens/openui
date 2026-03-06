@@ -31,6 +31,7 @@ const statusConfig: Record<AgentStatus, { label: string; color: string }> = {
   idle: { label: "Idle", color: "#6B7280" },
   disconnected: { label: "Disconnected", color: "#EF4444" },
   error: { label: "Error", color: "#EF4444" },
+  handoff: { label: "Ready for terminal", color: "#14B8A6" },
 };
 
 const presetColors = [
@@ -236,6 +237,23 @@ export function Sidebar() {
                     title="Fork session"
                   >
                     <GitFork className="w-4 h-4" />
+                  </button>
+                )}
+                {session && !showArchived && (
+                  <button
+                    onClick={async () => {
+                      const inOpenUI = ["running", "idle", "waiting_input", "tool_calling", "handoff"].includes(session.status);
+                      const target = inOpenUI ? "terminal" : "openui";
+                      await fetch(`/api/sessions/${session.sessionId}/request-handoff`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ target }),
+                      });
+                    }}
+                    className="w-7 h-7 rounded flex items-center justify-center text-teal-500 hover:text-teal-300 hover:bg-surface-active transition-colors"
+                    title={["running", "idle", "waiting_input", "tool_calling", "handoff"].includes(session.status) ? "Send to terminal" : "Resume in OpenUI"}
+                  >
+                    <TerminalIcon className="w-4 h-4" />
                   </button>
                 )}
                 <button

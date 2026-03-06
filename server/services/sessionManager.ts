@@ -181,6 +181,7 @@ export function buildPtyEnv(sessionId: string): Record<string, string> {
   }
   clean.TERM = "xterm-256color";
   clean.OPENUI_SESSION_ID = sessionId;
+  clean.OPENUI_PORT = process.env.PORT || "6968";
   return clean;
 }
 
@@ -415,7 +416,7 @@ export function restoreSessions() {
       createdAt: node.createdAt,
       clients: new Set(),
       outputBuffer: buffer,
-      status: "disconnected",
+      status: node.status === "handoff" ? "handoff" : "disconnected",
       lastOutputTime: 0,
       lastInputTime: 0,
       recentOutputSize: 0,
@@ -503,12 +504,16 @@ export function autoResumeSessions() {
           broadcastToSession(session, { type: "output", data });
         });
 
-        // Build the command with resume flag if we have a Claude session ID
-        const normalizedCmd = normalizeAgentCommand(session.command, session.agentId, HAS_ISAAC);
-        let finalCommand = injectPluginDir(normalizedCmd, session.agentId);
-
-        // For Claude sessions with a known claudeSessionId, use --resume to restore the specific session
+        // Build the command with resume flag if we have a Claude session ID.
+        // Don't inject --plugin-dir for resumed sessions: the JSONL lives in
+        // the home project dir and --plugin-dir makes Claude look in the wrong place.
         const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const isResume = session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId);
+        const normalizedCmd = normalizeAgentCommand(session.command, session.agentId, HAS_ISAAC);
+        let finalCommand = isResume
+          ? normalizedCmd
+          : injectPluginDir(normalizedCmd, session.agentId);
+
         if (session.agentId === "claude" && session.claudeSessionId && UUID_RE.test(session.claudeSessionId)) {
           // Ensure the session file is visible in the plugin project dir so --resume
           // can find it (--plugin-dir changes which project dir Claude looks in).

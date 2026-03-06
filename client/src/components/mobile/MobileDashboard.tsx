@@ -3,7 +3,7 @@ import { Search, WifiOff } from "lucide-react";
 import { useStore } from "../../stores/useStore";
 import { MobileSessionCard } from "./MobileSessionCard";
 
-type Filter = 'all' | 'waiting_input' | 'running' | 'idle' | 'error';
+type Filter = 'all' | 'waiting_input' | 'running' | 'idle' | 'error' | 'handoff';
 
 const FILTER_LABELS: Record<Filter, string> = {
   all: "All",
@@ -11,6 +11,7 @@ const FILTER_LABELS: Record<Filter, string> = {
   running: "Running",
   idle: "Idle",
   error: "Error",
+  handoff: "Handoff",
 };
 
 interface Props {
@@ -34,9 +35,10 @@ export function MobileDashboard({ refreshKey }: Props) {
 
   const sessionList = Array.from(sessions.values());
 
-  // Adaptive polling: 2s if any session is waiting_input, else 5s
+  // Adaptive polling: 2s if any session needs attention, else 5s
   const hasWaiting = sessionList.some(s => s.status === "waiting_input");
-  const pollInterval = hasWaiting ? 2000 : 5000;
+  const hasHandoff = sessionList.some(s => s.status === "handoff");
+  const pollInterval = (hasWaiting || hasHandoff) ? 2000 : 5000;
   const pollIntervalRef = useRef(pollInterval);
   pollIntervalRef.current = pollInterval;
 
@@ -108,12 +110,13 @@ export function MobileDashboard({ refreshKey }: Props) {
     return true;
   });
 
-  // Sort: waiting_input first
-  filtered.sort((a, b) => {
-    if (a.status === "waiting_input" && b.status !== "waiting_input") return -1;
-    if (b.status === "waiting_input" && a.status !== "waiting_input") return 1;
-    return 0;
-  });
+  // Sort: handoff first (user walking to laptop), then waiting_input, then rest
+  const statusPriority = (s: typeof filtered[0]) => {
+    if (s.status === "handoff") return 0;
+    if (s.status === "waiting_input") return 1;
+    return 2;
+  };
+  filtered.sort((a, b) => statusPriority(a) - statusPriority(b));
 
   return (
     <div className="flex-1 overflow-y-auto">

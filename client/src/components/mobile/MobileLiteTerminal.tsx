@@ -272,6 +272,7 @@ export function MobileLiteTerminal() {
               }, 50);
             } else {
               term.write(msg.data);
+              term.scrollToBottom();
             }
           }
         } catch (e) {
